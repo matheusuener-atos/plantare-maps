@@ -1,3 +1,5 @@
+/* Gera og-1200x630.jpg a partir de og-origem.html (precisa do Chrome e de: npm i playwright-core).
+   Uso: node gerar-og.mjs og-origem.html og-1200x630.jpg */
 import { chromium } from 'playwright-core';
 import { pathToFileURL } from 'node:url';
 const b=await chromium.launch({channel:'chrome', headless:true});
