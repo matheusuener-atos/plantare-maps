@@ -1,5 +1,5 @@
 # Site do Plantare Maps (app estático na Cloudflare).
-# Publicar:  copie ../plantare-maps.html para public/index.html e rode  npx wrangler deploy  nesta pasta.
+# Publicar:  npx wrangler deploy  nesta pasta. O [build] monta public/ (app, ícones, manifesto e service worker).
 name = "plantare-app"
 main = "src/index.js"
 compatibility_date = "2026-09-01"
@@ -11,6 +11,9 @@ routes = [
   { pattern = "www.plantaremaps.com.br", custom_domain = true },
   { pattern = "plantare.matheusuener.com.br", custom_domain = true }
 ]
+
+[build]
+command = "node montar.mjs"
 
 [assets]
 directory = "./public"

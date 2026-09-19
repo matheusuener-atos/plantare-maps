@@ -6,7 +6,14 @@
 <title>Plantare Maps — planejamento de pulverização</title>
 <meta name="description" content="Planeje a pulverização a partir do contorno do talhão: bordadura primeiro, linhas a partir do ponto inicial, manobras pela bordadura e exportação para o monitor.">
 <meta name="theme-color" content="#070B08">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 26 26'%3E%3Crect width='26' height='26' rx='6' fill='%23070B08'/%3E%3Cpath d='M13 22c0-6 1-10 7-15-7 0-10 3-10 9' fill='none' stroke='%235BE38A' stroke-width='2.2' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/site.webmanifest">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Plantare">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <!--
   PLANTARE MAPS — v3.0.0-previa (arquivo único, sem build)
 
@@ -485,7 +492,7 @@ body:not(.trabalho) .maplibregl-ctrl-top-left,body:not(.trabalho) .maplibregl-ct
   .leitura{width:100%;justify-content:space-between}
   .maplibregl-ctrl-top-left{top:54px}
 }
-@media (prefers-reduced-motion: reduce){
+@supports (display:block){
   :root:not(.anima) .hero,:root:not(.anima) .painel,:root:not(.anima) .metrica,:root:not(.anima) #veu,:root:not(.anima) #tom,:root:not(.anima) #luz{transition:none}
   :root:not(.anima) .abast .onda,:root:not(.anima) .passos li.agora i{animation:none}
 }
@@ -533,7 +540,7 @@ body:not(.trabalho) .maplibregl-ctrl-top-left,body:not(.trabalho) .maplibregl-ct
 #pagamento :focus-visible{outline:2px solid #8ce8ab;outline-offset:4px}
 @keyframes liberarCheckout{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
 :root:not(.anima) #pgDetalhes.liberado{animation:none}
-@media(prefers-reduced-motion:reduce){#pgDetalhes.liberado{animation:none}}
+:root:not(.anima){#pgDetalhes.liberado{animation:none}}
 @media(max-width:759px){.hero h1{font-size:clamp(32px,7.4vw,54px)}#pagamento .corpo{padding:22px}.etapas.etapas-guiadas{margin-bottom:12px}.player .fechar{font-size:12px;white-space:nowrap}}
 
 </style>
@@ -849,7 +856,7 @@ dialog::backdrop,#pagamento::backdrop{background:#020b064d;backdrop-filter:blur(
 }
 @media(max-height:720px) and (max-width:760px){.hero{top:21%}.hero h1{font-size:clamp(32px,8vw,52px)}.hero p{margin-top:15px}.ux-eyebrow{margin-bottom:15px}.ux-journey{display:none}.hero .acoes{margin-top:18px}}
 @media(max-height:650px) and (min-width:761px){.hero{top:46%;bottom:auto}.hero h1{font-size:clamp(34px,4.2vw,58px)}.ux-journey{margin-top:20px}.hero p{margin-top:16px}.ux-eyebrow{margin-bottom:16px}.painel{top:80px}.ux-project{top:95px}}
-@media(prefers-reduced-motion:reduce){.hero *,.ux-project{animation:none!important}.btn{transition:none}}
+:root:not(.anima){.hero *,.ux-project{animation:none!important}.btn{transition:none}}
 @media(prefers-contrast:more){.painel::before{background:linear-gradient(90deg,transparent,#071d10f5 20%)}.ux-dock button{background:#092017e8}.opcao .d,.painel .sub,.nota{color:#e3f2dc}}
 
 </style>
@@ -1052,7 +1059,7 @@ dialog.cp{width:min(980px,94vw);max-height:92vh;padding:0;color:var(--palha);ove
 .cp-tree span.pasta{color:var(--luz)}.cp-tree span.pasta::before{border-color:var(--luz);border-top-width:3px}
 @media (max-width:860px){.cp-grade{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:560px){.cp-corpo{padding:20px 16px}.cp-grade{grid-template-columns:1fr}.cp-cab h2{font-size:23px}.cp-zarte{height:52vh}}
-@media (prefers-reduced-motion:reduce){.cp-card,.cp-lupa,.mb-ver i,.combo-btn svg{transition:none}.cp-card:hover{transform:none}}
+:root:not(.anima){.cp-card,.cp-lupa,.mb-ver i,.combo-btn svg{transition:none}.cp-card:hover{transform:none}}
 
 /* ---- Peças: montar o percurso ---- */
 .pc-placar{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;margin:0 0 14px;border:1px solid var(--fio);border-radius:6px;overflow:hidden;background:var(--fio)}
@@ -1095,7 +1102,7 @@ dialog.cp{width:min(980px,94vw);max-height:92vh;padding:0;color:var(--palha);ove
 .pc-zero[open] summary::before{transform:rotate(45deg)}
 .pc-zero .nota{margin:8px 0}
 #hud .hud-ruim{color:#FFA89E}#hud .hud-aviso{color:#FFD970}
-@media (prefers-reduced-motion:reduce){.pc-zero summary::before{transition:none}}
+:root:not(.anima){.pc-zero summary::before{transition:none}}
 .camadas-links{margin-left:auto;display:flex;gap:12px;white-space:nowrap}.camadas-links .link{margin-left:0!important;font-size:12px}
 /* prévia no celular: um botão só para concluir (no player), painel recolhido só com a etapa,
    controles de zoom do MapLibre escondidos (pinça faz o zoom) */
@@ -1129,7 +1136,7 @@ dialog.cp{width:min(980px,94vw);max-height:92vh;padding:0;color:var(--palha);ove
 .pg-espera{display:flex;align-items:center;gap:10px;margin:8px 0 0;font-size:13px;color:var(--palha)}
 .pg-espera i{width:14px;height:14px;border-radius:50%;border:2px solid #8cf5a855;border-top-color:#8CF5A8;animation:pgGira 1s linear infinite}
 @keyframes pgGira{to{transform:rotate(360deg)}}
-@media (prefers-reduced-motion:reduce){.pg-espera i{animation:none}}
+:root:not(.anima){.pg-espera i{animation:none}}
 /* guia das peças */
 dialog.gp{width:min(860px,94vw)}
 .gp-passos{list-style:none;counter-reset:gp;margin:0 0 18px;padding:0;display:grid;gap:8px}
@@ -6497,9 +6504,10 @@ const CALC=(()=>{
    ====================================================================== */
 /* Movimento: por padrão segue o sistema ("remover animações" no Android, "efeitos de animação"
    no Windows). A pessoa pode ligar ou desligar em "Ajustar a cena". */
-const SISTEMA_REDUZ = matchMedia('(prefers-reduced-motion: reduce)').matches;
-const PREF_ANIM = (()=>{ try{ return localStorage.getItem('plantare.animacoes'); }catch(e){ return null; } })();
-const reduzMov = PREF_ANIM==='ligadas' ? false : PREF_ANIM==='desligadas' ? true : SISTEMA_REDUZ;
+/* Animações: o app sempre abre com elas ligadas. Desligar no menu vale só até fechar o app (sessionStorage). */
+try{ localStorage.removeItem('plantare.animacoes'); }catch(e){ /* preferência antiga, permanente: não vale mais */ }
+const PREF_ANIM = (()=>{ try{ return sessionStorage.getItem('plantare.animacoes'); }catch(e){ return null; } })();
+const reduzMov = PREF_ANIM==='desligadas';
 document.documentElement.classList.toggle('anima', !reduzMov);
 const RAD = Math.PI/180;
 const lerp=(a,b,t)=>a+(b-a)*t;
@@ -6854,18 +6862,10 @@ function montarChips(cont, nomes, atual, aoEscolher){
 }
 montarChips($('#chipsHora'), ['Agora',...Object.keys(FASES)], 'Agora', n=>{ CENA.fase=n; atualizarLegenda(); });
 montarChips($('#chipsTempo'), ['Real',...Object.keys(TEMPOS)], 'Real', n=>{ CENA.tempoEscolhido=n; proxRaio=performance.now()+1500; atualizarLegenda(); });
-montarChips($('#chipsAnim'), ['Seguir o sistema','Ligadas','Desligadas'],
-  PREF_ANIM==='ligadas'?'Ligadas':PREF_ANIM==='desligadas'?'Desligadas':'Seguir o sistema', n=>{
-    try{ if(n==='Seguir o sistema') localStorage.removeItem('plantare.animacoes');
-         else localStorage.setItem('plantare.animacoes', n.toLowerCase()); }catch(e){ /* sem armazenamento */ }
+montarChips($('#chipsAnim'), ['Ligadas','Desligadas'], reduzMov?'Desligadas':'Ligadas', n=>{
+    try{ if(n==='Ligadas') sessionStorage.removeItem('plantare.animacoes'); else sessionStorage.setItem('plantare.animacoes','desligadas'); }catch(e){ /* sem armazenamento */ }
     location.reload();
   });
-if(SISTEMA_REDUZ && PREF_ANIM===null){
-  const d=document.createElement('div'); d.className='dica'; d.style.display='block';
-  d.innerHTML='Seu aparelho pediu menos movimento, então o voo e o balanço estão desligados. <button type="button" class="link" id="btLigarAnim">Ligar animações</button>';
-  $('#hero').appendChild(d);
-  $('#btLigarAnim').addEventListener('click',()=>{ try{ localStorage.setItem('plantare.animacoes','ligadas'); }catch(e){ /* sem armazenamento */ } location.reload(); });
-}
 $('#btCena').addEventListener('click',()=>{ const ab=$('#cenaPainel').classList.toggle('aberto'); $('#btCena').setAttribute('aria-expanded', String(ab)); });
 $('#btRegiao').addEventListener('click',()=>{
   CENA.regiaoIdx=sortearRegiao(CENA.regiaoIdx); CENA.tempoReal=null; atualizarLegenda();
@@ -12702,6 +12702,54 @@ MAPA.carregado.then(()=>{prepararCamadasFerramentas();prepararCriadorMapa();});
   requestAnimationFrame(laco);
   setTimeout(()=>{ if(!MAPA.pronto) $('#veu').style.opacity=0; }, 4000);
 }
+</script>
+<style id="pwa">
+/* Aviso "instale o app" (PWA) */
+.instalar{position:fixed;left:50%;bottom:calc(16px + env(safe-area-inset-bottom,0px));transform:translate(-50%,24px);opacity:0;z-index:9999;
+  width:min(440px,calc(100vw - 32px));display:grid;grid-template-columns:auto 1fr;gap:12px;align-items:center;padding:14px 16px;
+  background:rgba(14,23,18,.94);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgba(237,230,214,.16);border-radius:16px;
+  color:var(--palha);font-family:var(--f-texto);box-shadow:0 18px 50px rgba(0,0,0,.45);transition:transform .35s ease,opacity .35s ease}
+.instalar.visivel{transform:translate(-50%,0);opacity:1}
+.instalar[hidden]{display:none}
+.instalar img{width:44px;height:44px;border-radius:10px}
+.instalar b{display:block;font-size:14.5px;margin-bottom:2px}
+.instalar p{margin:0;font-size:12.5px;line-height:1.45;color:var(--poeira)}
+.instalar .acoes{grid-column:1/-1;display:flex;gap:8px;justify-content:flex-end}
+.instalar button{font:600 13px/1 var(--f-texto);border-radius:10px;padding:10px 14px;cursor:pointer;border:1px solid rgba(237,230,214,.2);background:transparent;color:var(--palha)}
+.instalar button.sim{background:var(--luz);border-color:var(--luz);color:#07130B}
+</style>
+<div class="instalar" id="pwaAviso" role="dialog" aria-live="polite" aria-label="Instalar o Plantare Maps" hidden>
+  <img src="/android-chrome-192x192.png" alt="">
+  <div><b>Instale o Plantare Maps</b><p id="pwaTexto">Abra direto da tela inicial, em tela cheia e mais rápido.</p></div>
+  <div class="acoes"><button type="button" id="pwaDepois">Agora não</button><button type="button" class="sim" id="pwaInstalar">Instalar</button></div>
+</div>
+<script id="pwa-js">
+/* PWA: service worker (abre mais rápido e sem internet) + aviso quando o app não está instalado.
+   Só roda no site publicado (https); aberto como arquivo local não faz nada. */
+(()=>{
+  if(location.protocol!=='https:') return;
+  if('serviceWorker' in navigator) addEventListener('load',()=>navigator.serviceWorker.register('/sw.js').catch(()=>{}));
+  const instalado=()=>matchMedia('(display-mode: standalone)').matches || navigator.standalone===true;
+  if(instalado()) return;
+  const CHAVE='plantare.pwa.adiado', PAUSA=7*864e5;   // "Agora não" silencia por 7 dias
+  try{ if(Date.now()-(+localStorage.getItem(CHAVE)||0)<PAUSA) return; }catch(e){}
+  const av=document.getElementById('pwaAviso'), bt=document.getElementById('pwaInstalar');
+  const ua=navigator.userAgent, ios=/iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints>1);
+  let pedido=null;
+  const mostrar=()=>{ if(instalado() || !av.hidden) return; av.hidden=false; requestAnimationFrame(()=>av.classList.add('visivel')); };
+  const esconder=()=>{ av.classList.remove('visivel'); setTimeout(()=>{ av.hidden=true; }, 400); };
+  addEventListener('beforeinstallprompt',e=>{ e.preventDefault(); pedido=e; setTimeout(mostrar, 6000); });
+  addEventListener('appinstalled',()=>{ pedido=null; esconder(); });
+  if(ios){   // Safari não tem botão de instalar: explica o caminho
+    document.getElementById('pwaTexto').innerHTML='No Safari, toque em <b>Compartilhar</b> e depois em <b>Adicionar à Tela de Início</b>.';
+    bt.textContent='Entendi'; setTimeout(mostrar, 6000);
+  }
+  bt.addEventListener('click',async()=>{
+    if(pedido){ pedido.prompt(); const r=await pedido.userChoice.catch(()=>null); pedido=null; if(!r || r.outcome!=='accepted') try{ localStorage.setItem(CHAVE, Date.now()); }catch(e){} }
+    esconder();
+  });
+  document.getElementById('pwaDepois').addEventListener('click',()=>{ try{ localStorage.setItem(CHAVE, Date.now()); }catch(e){} esconder(); });
+})();
 </script>
 </body>
 </html>
