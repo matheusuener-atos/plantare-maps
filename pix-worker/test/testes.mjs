@@ -42,6 +42,16 @@ await t('/cobranca com token falso → 401', async () => { assert.equal((await c
 await t('/eu mostra só compras pagas da conta', async () => { const { st, j } = await chama('/eu', null, ANA); assert.equal(st, 200); assert.equal(j.email, 'ana@fazenda.com.br'); assert.deepEqual(j.compras, []); });
 
 // ---------- preço e cupom ----------
+await t('talhão com 1.229 partes (dessecação) é aceito', async () => {
+  const muitos = []; for (let i = 0; i < 1229; i++) { const x = -55 + (i % 40) * 0.001, y = -12 + Math.floor(i / 40) * 0.001; muitos.push({ outer: [[x, y], [x + 0.0004, y], [x + 0.0004, y + 0.0004], [x, y + 0.0004]], holes: [] }); }
+  const { st, j } = await chama('/preco', { polys: muitos, camadas: ['linhas_ab'] }); assert.equal(st, 200, JSON.stringify(j)); assert.ok(j.preco.ha > 1); });
+await t('talhão com 200 mil pontos é aceito; acima de 300 mil, recusado com mensagem clara', async () => {
+  const anel = n => { const r = []; for (let i = 0; i < n; i++) { const a = i / n * 2 * Math.PI; r.push([-55 + Math.cos(a) * 0.01, -12 + Math.sin(a) * 0.01]); } return r; };
+  assert.equal((await chama('/preco', { polys: [{ outer: anel(200000), holes: [] }], camadas: ['linhas_ab'] })).st, 200);
+  const { st, j } = await chama('/preco', { polys: [{ outer: anel(300001), holes: [] }], camadas: ['linhas_ab'] }); assert.equal(st, 400); assert.match(j.motivo, /grande demais/); });
+await t('talhão com 5 mil partes é aceito', async () => {
+  const muitos = []; for (let i = 0; i < 5000; i++) { const x = -55 + (i % 100) * 0.001, y = -12 + Math.floor(i / 100) * 0.001; muitos.push({ outer: [[x, y], [x + 0.0004, y], [x + 0.0004, y + 0.0004], [x, y + 0.0004]], holes: [] }); }
+  assert.equal((await chama('/preco', { polys: muitos, camadas: ['linhas_ab'] })).st, 200); });
 await t('/preco ignora área mandada pelo navegador', async () => { const { j } = await chama('/preco', { polys, camadas: ['linhas_ab'], area_ha: 1 }); assert.ok(j.preco.ha > 99); });
 await t('/preco: cupom sem conta não vale', async () => { const { j } = await chama('/preco', { polys, camadas: TODAS, cupom: 'campo10' }); assert.equal(j.cupom.valido, false); assert.match(j.cupom.motivo, /Entre/); assert.equal(j.preco.cupom, 0); });
 await t('/preco: cupom com conta vale', async () => { const { j } = await chama('/preco', { polys, camadas: ['linhas_ab', 'bordadura', 'percurso'], cupom: 'campo10' }, ANA);

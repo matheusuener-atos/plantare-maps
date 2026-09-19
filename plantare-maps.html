@@ -12836,7 +12836,17 @@ function contornoSimples(polys){
       for(let i=a+1;i<z;i++){ let t=((pts[i][0]-x1)*dx+(pts[i][1]-y1)*dy)/L; t=Math.max(0,Math.min(1,t)); const d=Math.hypot(pts[i][0]-(x1+t*dx), pts[i][1]-(y1+t*dy)); if(d>dm){dm=d;ix=i;} }
       if(dm>tol && ix>0){ keep[ix]=1; st.push([a,ix],[ix,z]); } }
     return pts.filter((p,i)=>keep[i]); };
-  return (polys||[]).map(p=>{ let r=dp(p.outer); const passo=Math.ceil(r.length/400); if(passo>1) r=r.filter((q,i)=>i%passo===0||i===r.length-1); return r.map(q=>[r6(q[0]),r6(q[1])]); });
+  // só para desenhar no mapa da conta: os maiores contornos primeiro, até ~2.500 pontos no total
+  // (um mapa de dessecação pode ter mais de mil manchas; o projeto inteiro vai completo para o Storage)
+  const area=r=>{ let s=0; for(let i=0,j=r.length-1;i<r.length;j=i++) s+=(r[j][0]-r[i][0])*(r[j][1]+r[i][1]); return Math.abs(s); };
+  const aneis=(polys||[]).map(p=>p.outer).filter(r=>Array.isArray(r)&&r.length>=3).sort((x,y)=>area(y)-area(x));
+  const out=[]; let total=0;
+  for(const anel of aneis){
+    let r=dp(anel); const passo=Math.ceil(r.length/400); if(passo>1) r=r.filter((q,i)=>i%passo===0||i===r.length-1);
+    if(out.length && total+r.length>2500) break;
+    out.push(r.map(q=>[r6(q[0]),r6(q[1])])); total+=r.length;
+  }
+  return out;
 }
 function contaTalhaoAgendar(){
   if(!contaLogada() || !E.kml || !E.polysLL) return;

@@ -72,11 +72,20 @@ const q = encodeURIComponent;
 
 /* ---------------- talhão ---------------- */
 /* polígonos do app: [{outer:[[lon,lat]...], holes:[[...]]}] — confere formato e tamanho */
+/* Sem limite de partes (um mapa de dessecação pode ter milhares de manchas). O que protege o servidor
+   é o total de pontos: 300 mil é folgado para talhões reais e leva poucos ms para medir. */
+const MAX_PONTOS = 300000;
 function validarPolys(polys) {
-  if (!Array.isArray(polys) || !polys.length || polys.length > 50) return 'Talhão inválido.';
+  if (!Array.isArray(polys) || !polys.length) return 'Talhão inválido.';
   let n = 0;
-  const anelOk = r => Array.isArray(r) && r.length >= 3 && r.every(p => Array.isArray(p) && p.length >= 2 && isFinite(p[0]) && isFinite(p[1]) && Math.abs(p[0]) <= 180 && Math.abs(p[1]) <= 90 && ++n <= 60000);
-  for (const p of polys) { if (!p || !anelOk(p.outer)) return 'Talhão inválido.'; for (const h of p.holes || []) if (!anelOk(h)) return 'Obstáculo inválido.'; }
+  const pontoOk = p => Array.isArray(p) && p.length >= 2 && isFinite(p[0]) && isFinite(p[1]) && Math.abs(p[0]) <= 180 && Math.abs(p[1]) <= 90;
+  const anelOk = r => Array.isArray(r) && r.length >= 3 && r.every(pontoOk);
+  for (const p of polys) {
+    if (!p || !anelOk(p.outer)) return 'Talhão inválido.';
+    n += p.outer.length;
+    for (const h of p.holes || []) { if (!anelOk(h)) return 'Obstáculo inválido.'; n += h.length; }
+    if (n > MAX_PONTOS) return 'Talhão grande demais para compra online (mais de 300 mil pontos). Fale com a gente.';
+  }
   return null;
 }
 /* impressão digital do talhão: o mesmo polígono dá sempre o mesmo código */
