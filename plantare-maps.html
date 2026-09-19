@@ -901,12 +901,12 @@ body.criando #mapa .maplibregl-canvas{filter:none!important}
 body.criando #tom,body.criando #luz,body.criando #ceu{display:none!important}
 body.criando .marca{z-index:32}.hero .acoes.duas{display:flex;gap:10px;flex-wrap:wrap}.hero .acoes.duas .btn{min-width:148px}
 .cr-ui[hidden]{display:none!important}.cr-ui{font-family:var(--f-texto);color:#eaf3e5}
-.cr-search{position:fixed;z-index:31;top:25px;left:50%;width:min(610px,calc(100vw - 420px));transform:translateX(-50%)}
+.cr-search{position:fixed;z-index:32;top:25px;left:50%;width:min(610px,calc(100vw - 420px));transform:translateX(-50%)}
 .cr-search form{display:grid;grid-template-columns:1fr auto;background:var(--cr-glass);border:1px solid var(--cr-line);border-radius:5px;backdrop-filter:blur(20px) saturate(110%);-webkit-backdrop-filter:blur(20px) saturate(110%);box-shadow:0 18px 45px #03100738}
 .cr-search input{min-width:0;height:48px;padding:0 16px;background:transparent;border:0;color:#f1f7ed;font:500 13px var(--f-texto);outline:0}.cr-search input::placeholder{color:#c8d7c1a3}
 .cr-search button{border:0;border-left:1px solid var(--cr-line);background:var(--cr-soft);color:#dff4d7;padding:0 18px;font:600 12px var(--f-texto);cursor:pointer}
 .cr-results{margin-top:7px;background:rgba(8,24,15,.9);border:1px solid var(--cr-line);border-radius:4px;backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);overflow:hidden;box-shadow:0 20px 60px #0007}
-.cr-results button{display:block;width:100%;padding:11px 14px;border:0;border-bottom:1px solid rgba(221,255,216,.1);background:transparent;color:#e7f1e2;text-align:left;font:500 12px/1.35 var(--f-texto);cursor:pointer}.cr-results button:hover{background:rgba(199,255,180,.1)}
+.cr-results button{display:block;width:100%;padding:11px 14px;border:0;border-bottom:1px solid rgba(221,255,216,.1);background:transparent;color:#e7f1e2;text-align:left;font:500 12px/1.35 var(--f-texto);cursor:pointer}.cr-results button:hover{background:rgba(199,255,180,.1)}.cr-results button b{word-break:break-all}
 .cr-toolbar{position:fixed;z-index:31;left:28px;top:245px;display:flex;flex-direction:column;gap:6px}
 .cr-tool{position:relative;width:56px;height:54px;border:1px solid var(--cr-line);border-radius:4px;background:var(--cr-glass);color:#dcebd6;backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);display:flex;align-items:center;justify-content:center;cursor:pointer;transition:.2s ease}
 .cr-tool svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.55;stroke-linecap:round;stroke-linejoin:round}.cr-tool span{position:absolute;left:66px;white-space:nowrap;padding:6px 8px;border:1px solid var(--cr-line);border-radius:3px;background:rgba(6,19,12,.9);font-size:10px;letter-spacing:.06em;text-transform:uppercase;opacity:0;transform:translateX(-6px);pointer-events:none;transition:.18s}
@@ -1218,7 +1218,7 @@ dialog.gp{width:min(860px,94vw)}
 </div>
 
 <div class="cr-ui cr-search" id="crSearch" hidden>
-  <form id="crSearchForm" role="search"><input id="crSearchInput" autocomplete="off" spellcheck="false" aria-label="Buscar cidade ou coordenadas" placeholder="Cidade, fazenda ou coordenadas — ex.: -17.79, -50.92"><button type="submit">Localizar</button></form>
+  <form id="crSearchForm" role="search"><input id="crSearchInput" autocomplete="off" spellcheck="false" aria-label="Buscar cidade, coordenadas ou número do CAR" placeholder="Cidade, coordenadas ou nº do recibo do CAR"><button type="submit">Localizar</button></form>
   <div class="cr-results" id="crResults" hidden></div>
 </div>
 
@@ -12022,7 +12022,53 @@ function carNormalizar(j){
 }
 function carCacheSet(key,value){CAR.cache.delete(key);CAR.cache.set(key,{at:Date.now(),value});while(CAR.cache.size>CAR_CONFIG.cacheMax)CAR.cache.delete(CAR.cache.keys().next().value);}
 function carCacheGet(key){const x=CAR.cache.get(key);if(!x)return null;if(Date.now()-x.at>CAR_CONFIG.cacheMs){CAR.cache.delete(key);return null;}CAR.cache.delete(key);CAR.cache.set(key,x);return x.value;}
-function carAplicarDados(v){CAR.dados=v.fc;CAR.index=v.index;carFonte('car-data',v.fc);const n=v.fc.features.length;carEstado(v.limitado?'600+':String(n));carPainel(n?'ok':'',n?(v.limitado?'600 imóveis exibidos. Aproxime para refinar.':fmt(n)+' '+(n===1?'imóvel encontrado.':'imóveis encontrados.')+' Clique em um perímetro.'):'Nenhum imóvel CAR nesta área.');}
+function carAplicarDados(v){CAR.dados=v.fc;CAR.index=v.index;carFonte('car-data',v.fc);const n=v.fc.features.length;carEstado(v.limitado?'600+':String(n));carPainel(n?'ok':'',n?(v.limitado?'600 imóveis exibidos. Aproxime para refinar.':fmt(n)+' '+(n===1?'imóvel encontrado.':'imóveis encontrados.')+' Clique em um perímetro.'):'Nenhum imóvel CAR nesta área.');
+  // imóvel achado pelo número do recibo: continua em destaque depois que a camada carrega
+  if(CAR.fixo && CAR.selected && CAR.selected.properties.cod_imovel===CAR.fixo) carRenderSelecionado(CAR.used?'Perímetro copiado. Revise os nós e obstáculos antes de continuar.':'Encontrado pelo número do recibo. Toque em Usar perímetro para copiar para o editor.');}
+/* Número do recibo do CAR: UF-código IBGE do município (7)-32 caracteres. O recibo impresso mostra
+   a última parte com pontos a cada 4 caracteres; o SICAR guarda sem pontos, em maiúsculas. */
+function carCodigoDe(q){
+  const s=String(q||'').toUpperCase().replace(/[\s.]/g,''), m=s.match(/^([A-Z]{2})-?(\d{7})-?([0-9A-F]{32})$/);
+  return m && CAR_UFS.has(m[1]) ? m[1]+'-'+m[2]+'-'+m[3] : null;
+}
+/* começo de um número do CAR (UF-município-4+ caracteres), para sugerir enquanto digita */
+function carPrefixoDe(q){
+  const s=String(q||'').toUpperCase().replace(/[\s.]/g,''), m=s.match(/^([A-Z]{2})-?(\d{7})-?([0-9A-F]{4,32})$/);
+  return m && CAR_UFS.has(m[1]) ? m[1]+'-'+m[2]+'-'+m[3] : null;
+}
+/* sugestões em tempo real: "código · Município/UF · área" (o CAR público não tem o nome do imóvel) */
+async function carSugerir(prefixo, seq){
+  const box=$('#crResults'); box.hidden=false; box.innerHTML='<button type="button" disabled>Buscando no CAR…</button>'; box._dados=[];
+  const params=new URLSearchParams({service:'WFS',version:'1.0.0',request:'GetFeature',typeName:'sicar:sicar_imoveis_'+prefixo.slice(0,2).toLowerCase(),outputFormat:'application/json',
+    maxFeatures:'6',propertyName:'cod_imovel,municipio,uf,area,status_imovel',cql_filter:"cod_imovel LIKE '"+prefixo+"%'"});
+  try{
+    const j=await carJson(CAR_CONFIG.wfs+'?'+params, new AbortController().signal, 512000);
+    if(seq!==CR.searchSeq) return;
+    const fs=(j&&j.features)||[];
+    if(!fs.length){ box.innerHTML='<button type="button" disabled>Nenhum imóvel do CAR começa com esse número.</button>'; return; }
+    box.innerHTML=fs.map(f=>{ const p=f.properties||{};
+      return '<button type="button" data-car-cod="'+esc(p.cod_imovel)+'"><b style="font-family:var(--f-num);font-weight:500">'+esc(p.cod_imovel)+'</b><br><span style="opacity:.75">'
+        +esc((p.municipio||'')+(p.uf?'/'+p.uf:''))+(Number.isFinite(+p.area)?' · '+fmt(+p.area,1)+' ha':'')+(p.status_imovel==='CA'?' · cancelado':'')+'</span></button>'; }).join('');
+  }catch(e){ if(seq===CR.searchSeq) box.innerHTML='<button type="button" disabled>O CAR não respondeu agora. Termine de digitar o número e aperte Localizar.</button>'; }
+}
+async function carBuscarCodigo(cod){
+  const box=$('#crResults'); box.hidden=false; box.innerHTML='<button type="button" disabled>Buscando o imóvel no CAR…</button>'; box._dados=[];
+  const params=new URLSearchParams({service:'WFS',version:'1.0.0',request:'GetFeature',typeName:'sicar:sicar_imoveis_'+cod.slice(0,2).toLowerCase(),outputFormat:'application/json',srsName:'EPSG:4326',maxFeatures:'1',
+    cql_filter:"cod_imovel='"+cod+"'",propertyName:'cod_imovel,status_imovel,area,condicao,uf,municipio,tipo_imovel,geo_area_imovel'});
+  let f=null;
+  try{ const v=carNormalizar(await carJson(CAR_CONFIG.wfs+'?'+params, new AbortController().signal)); f=v.fc.features[0]||null; }
+  catch(e){ console.warn('CAR:',e); crExibirSugestoes([],'O CAR não respondeu agora. Tente de novo em instantes.'); return; }
+  if(!f){ crExibirSugestoes([],'Nenhum imóvel com esse número no CAR. Confira o código do recibo.'); return; }
+  box.hidden=true;
+  CAR.fixo=cod; CAR.selected=crClone(f); CAR.used=false;
+  if(!CAR.ativo) carAtivar(true,true);
+  carRenderSelecionado('Encontrado pelo número do recibo. Toque em Usar perímetro para copiar para o editor.');
+  const g=f.geometry, polys=g.type==='Polygon'?[g.coordinates]:g.coordinates, pts=polys.flatMap(p=>p[0]||[]);
+  const xs=pts.map(q=>q[0]), ys=pts.map(q=>q[1]);
+  const p=f.properties||{}; CR.nome=((p.municipio||'talhao')+'_'+cod.slice(-8)).replace(/\s+/g,'_');
+  MAPA.map.fitBounds([[Math.min(...xs),Math.min(...ys)],[Math.max(...xs),Math.max(...ys)]],{padding:innerWidth<760?{top:170,right:30,bottom:260,left:30}:{top:105,right:360,bottom:115,left:110},pitch:0,bearing:0,duration:reduzMov?0:1300,maxZoom:17});
+  crAutosave();
+}
 function carChave(uf,b,z){const d=z>=15?4:z>=13?3:2;return [uf,Math.floor(z*2)/2,b.getWest().toFixed(d),b.getSouth().toFixed(d),b.getEast().toFixed(d),b.getNorth().toFixed(d)].join('|');}
 async function carConsultar(){
   if(!CAR.ativo||!CR.ativo)return;carAbortar();const seq=CAR.seq,zoom=MAPA.map.getZoom();
@@ -12179,7 +12225,11 @@ function crExibirSugestoes(j,vazio='Nenhum lugar encontrado.'){
   const box=$('#crResults');box.hidden=false;if(!j.length){box.innerHTML='<button type="button" disabled>'+esc(vazio)+'</button>';box._dados=[];return;}box.innerHTML=j.map((x,i)=>'<button type="button" data-cr-result="'+i+'">'+esc(x.display_name)+'</button>').join('');box._dados=j;
 }
 async function crBuscar(q,sugerir=false){
-  q=(q||'').trim();if(!q)return;const seq=++CR.searchSeq,nums=q.match(/-?\d+(?:[.,]\d+)?/g);
+  q=(q||'').trim();if(!q)return;
+  // número do recibo do CAR: completo → vai direto ao imóvel; começo do número → sugestões enquanto digita
+  const cod=carCodigoDe(q); if(cod && !sugerir){ CR.searchSeq++; carBuscarCodigo(cod); return; }
+  const pref=carPrefixoDe(q); if(pref){ carSugerir(pref, ++CR.searchSeq); return; }
+  const seq=++CR.searchSeq,nums=q.match(/-?\d+(?:[.,]\d+)?/g);
   if(!sugerir&&nums&&nums.length>=2){const lat=parseFloat(nums[0].replace(',','.')),lon=parseFloat(nums[1].replace(',','.'));if(Math.abs(lat)<=90&&Math.abs(lon)<=180){crIr(lon,lat,'talhao_'+Math.abs(lat).toFixed(3)+'_'+Math.abs(lon).toFixed(3));return;}}
   if(sugerir&&q.length<3)return;const key=q.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase(),cached=CR.searchCache.get(key);if(cached){if(seq===CR.searchSeq)crExibirSugestoes(cached);return;}
   const box=$('#crResults');box.hidden=false;box.innerHTML='<button type="button" disabled>Buscando…</button>';
@@ -12625,7 +12675,7 @@ $('#crDrainWidth').addEventListener('change',e=>{const o=CR.obstacles[CR.selecte
 $('#crSearchForm').addEventListener('submit',e=>{e.preventDefault();if(CR.searchTimer)clearTimeout(CR.searchTimer);crBuscar($('#crSearchInput').value);});
 $('#crSearchInput').addEventListener('input',e=>{if(CR.searchTimer)clearTimeout(CR.searchTimer);CR.searchSeq++;const q=e.target.value.trim();if(q.length<3){$('#crResults').hidden=true;return;}CR.searchTimer=setTimeout(()=>{CR.searchTimer=0;crBuscar(q,true);},420);});
 $('#crSearchInput').addEventListener('focus',e=>{const q=e.target.value.trim(),key=q.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();if(q.length>=3&&CR.searchCache.has(key))crExibirSugestoes(CR.searchCache.get(key));});
-$('#crResults').addEventListener('click',e=>{const b=e.target.closest('[data-cr-result]');if(!b)return;const x=e.currentTarget._dados?.[+b.dataset.crResult];if(x){$('#crSearchInput').value=x.display_name;crIr(+x.lon,+x.lat,(x.display_name.split(',')[0]||'talhao').trim());}});
+$('#crResults').addEventListener('click',e=>{const c=e.target.closest('[data-car-cod]');if(c){$('#crSearchInput').value=c.dataset.carCod;carBuscarCodigo(c.dataset.carCod);return;}const b=e.target.closest('[data-cr-result]');if(!b)return;const x=e.currentTarget._dados?.[+b.dataset.crResult];if(x){$('#crSearchInput').value=x.display_name;crIr(+x.lon,+x.lat,(x.display_name.split(',')[0]||'talhao').trim());}});
 $('#crLayers').addEventListener('click',e=>{const b=e.target.closest('[data-cr-layer]');if(b){crTrocarLayer(b.dataset.crLayer);return;}if(e.target.closest('[data-cr-car]'))carAtivar(!CAR.ativo);});
 $('#crCarClose').addEventListener('click',carFechaPainel);$('#crCarCard').addEventListener('click',e=>{if(e.target.closest('[data-car-use]'))carUsarPerimetro();});
 addEventListener('keydown',e=>{if(!CR.ativo||document.querySelector('dialog[open]')||/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName))return;if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){e.preventDefault();crUndo();return;}if(e.key==='Delete'||e.key==='Backspace'){e.preventDefault();crDeleteSelected();return;}if(e.key==='Enter'&&(CR.tool==='limite'||CR.tool==='poligono')&&CR.draft.length>=3){e.preventDefault();crFecharRascunho();return;}if(e.key==='Escape'){e.preventDefault();if(CR.draft.length){CR.draft=[];crRender();}else crSetTool('selecionar');}});
