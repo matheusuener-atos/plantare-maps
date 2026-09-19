@@ -12763,6 +12763,48 @@ MAPA.carregado.then(()=>{prepararCamadasFerramentas();prepararCriadorMapa();});
   setTimeout(()=>{ if(!MAPA.pronto) $('#veu').style.opacity=0; }, 4000);
 }
 </script>
+<style id="ajustes-celular">
+/* grades de campos: as colunas encolhem (antes um texto longo de lista empurrava a coluna para fora da tela) */
+.campos{grid-template-columns:repeat(2,minmax(0,1fr))}
+.campo{min-width:0}
+.campo input,.campo select{width:100%;min-width:0;max-width:100%;box-sizing:border-box;text-overflow:ellipsis}
+@media(max-width:760px){.monitor-bloco .campos,.mb-perfil{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:420px){#ajustes .campos{grid-template-columns:minmax(0,1fr)}#ajustes .campo[style*="grid-column"]{grid-column:auto!important}}
+#ajustes{max-width:calc(100vw - 20px);overflow-x:hidden}
+/* barra do desenho: "Gerar linhas" com a mesma altura e letra dos outros botões (continua em destaque) */
+.cr-bottom .btn{min-height:40px;height:40px;font:600 10px var(--f-texto)}
+/* janela de pergunta no vidro do sistema (no lugar do confirm do navegador) */
+dialog.pergunta{width:min(420px,calc(100vw - 32px));padding:22px 22px 18px;color:var(--palha);background:rgba(19,39,29,.42);border:1px solid rgba(227,249,232,.38);border-radius:8px;
+  box-shadow:inset 0 1px 0 rgba(245,255,248,.16),0 12px 35px rgba(0,12,5,.14);backdrop-filter:blur(18px) saturate(110%);-webkit-backdrop-filter:blur(18px) saturate(110%)}
+dialog.pergunta::backdrop{background:rgba(0,0,0,.45)}
+dialog.pergunta h2{font-family:var(--f-titulo);font-weight:450;font-size:22px;line-height:1.15;margin:8px 0 8px}
+dialog.pergunta p{font-size:13.5px;line-height:1.55;color:#d9e6d3;margin:0}
+dialog.pergunta .acoes{display:flex;gap:10px;justify-content:flex-end;margin-top:20px;flex-wrap:wrap}
+dialog.pergunta .acoes .btn{min-height:42px;padding:0 18px;font-size:13.5px}
+@media(max-width:420px){dialog.pergunta .acoes .btn{flex:1}}
+</style>
+<dialog class="pergunta" id="pergunta" aria-labelledby="perguntaTitulo">
+  <div class="ux-overline" id="perguntaRotulo">CONFIRME <span class="ux-dot"></span></div>
+  <h2 id="perguntaTitulo"></h2><p id="perguntaTexto"></p>
+  <div class="acoes"><button type="button" class="btn btn-fio" id="perguntaNao">Cancelar</button><button type="button" class="btn btn-luz" id="perguntaSim">OK</button></div>
+</dialog>
+<script data-modulo="pergunta">
+"use strict";
+/* perguntar({titulo, texto, sim, nao, rotulo}) → Promise<boolean>. Janela no vidro do sistema. */
+function perguntar(o){
+  o=o||{}; const d=document.getElementById('pergunta');
+  document.getElementById('perguntaRotulo').firstChild.textContent=(o.rotulo||'CONFIRME')+' ';
+  document.getElementById('perguntaTitulo').textContent=o.titulo||'';
+  document.getElementById('perguntaTexto').textContent=o.texto||'';
+  const sim=document.getElementById('perguntaSim'), nao=document.getElementById('perguntaNao');
+  sim.textContent=o.sim||'OK'; nao.textContent=o.nao||'Cancelar';
+  return new Promise(res=>{
+    const fim=v=>{ sim.onclick=nao.onclick=null; d.onclose=null; if(d.open) d.close(); res(v); };
+    sim.onclick=()=>fim(true); nao.onclick=()=>fim(false); d.onclose=()=>fim(false);   // Esc = cancelar
+    d.showModal(); setTimeout(()=>sim.focus(),30);
+  });
+}
+</script>
 <style id="hero-desenhar">
 /* "Desenhar no mapa": mesma caixa do "Importar arquivo", em vidro contornado, com ícone de polígono */
 .hero #btDesenhar{min-width:204px;min-height:53px;padding:0 21px;justify-content:space-between;gap:35px;font-size:14px;color:#eaffde;
@@ -13269,7 +13311,7 @@ async function contaEntrarMapa(){
   if(E.etapa==='desenho'){ aviso('Saia do desenho antes de abrir seus talhões.'); return false; }
   if(E.etapa==='voando' || E.etapa==='analisando' || E.etapa==='calculando'){ aviso('Espere o cálculo terminar para abrir seus talhões.'); return false; }
   if(E.etapa!=='abertura'){
-    if(!confirm('Fechar o plano aberto para ver seus talhões? Ele continua salvo neste aparelho e na sua conta.')) return false;
+    if(!(await perguntar({titulo:'Fechar o plano aberto?', texto:'Para ver seus talhões, o plano atual é fechado. Ele continua salvo neste aparelho e na sua conta.', sim:'Ver meus talhões', nao:'Continuar no plano'}))) return false;
     salvar(); await contaSalvarTalhaoAgora().catch(()=>{}); await voltarAoInicio();
   }
   CX.mapa=true; document.body.classList.add('conta-mapa');
