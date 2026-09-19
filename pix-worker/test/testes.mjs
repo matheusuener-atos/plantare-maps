@@ -18,6 +18,8 @@ F.entrar('tok-ana-0123456789abcdef', 'u-ana', 'ana@fazenda.com.br');
 F.entrar('tok-beto-0123456789abcdef', 'u-beto', 'beto@fazenda.com.br');
 const ANA = { token: 'tok-ana-0123456789abcdef' }, BETO = { token: 'tok-beto-0123456789abcdef' };
 F.cupons.push({ codigo: 'CAMPO10', desconto: 0.10, usos_max: 100, so_primeira: false, ativo: true });
+F.cupons.push({ codigo: 'BEMVINDO30', desconto: 0.30, validade: new Date(Date.now() + 30 * 864e5).toISOString(), ativo: true });
+F.cupons.push({ codigo: 'VENCIDO', desconto: 0.30, validade: new Date(Date.now() - 864e5).toISOString(), ativo: true });
 F.cupons.push({ codigo: 'PRIMEIRA', desconto: 0.20, usos_max: null, so_primeira: true, ativo: true });
 F.cupons.push({ codigo: 'UNICO', desconto: 0.15, usos_max: 1, so_primeira: false, ativo: true });
 F.cupons.push({ codigo: 'GRANDE', desconto: 0.05, area_min: 500, ativo: true });
@@ -57,6 +59,9 @@ await t('/preco: cupom sem conta não vale', async () => { const { j } = await c
 await t('/preco: cupom com conta vale', async () => { const { j } = await chama('/preco', { polys, camadas: ['linhas_ab', 'bordadura', 'percurso'], cupom: 'campo10' }, ANA);
   assert.ok(j.cupom.valido); assert.equal(j.preco.total, Math.round(j.preco.subtotal * 0.9 * 100) / 100); });
 await t('/preco: cupom de área mínima', async () => { const { j } = await chama('/preco', { polys, camadas: TODAS, cupom: 'GRANDE' }, ANA); assert.equal(j.cupom.valido, false); assert.match(j.cupom.motivo, /500/); });
+await t('/preco: cupom com validade devolve a data', async () => { const { j } = await chama('/preco', { polys, camadas: TODAS, cupom: 'bemvindo30' }, ANA);
+  assert.ok(j.cupom.valido); assert.equal(j.cupom.desconto, 0.3); assert.ok(Date.parse(j.cupom.validade) > Date.now()); });
+await t('/preco: cupom vencido explica o motivo', async () => { const { j } = await chama('/preco', { polys, camadas: TODAS, cupom: 'VENCIDO' }, ANA); assert.equal(j.cupom.valido, false); assert.match(j.cupom.motivo, /venceu/); });
 await t('/preco: cupom inexistente', async () => { const { j } = await chama('/preco', { polys, camadas: TODAS, cupom: 'NADA' }, ANA); assert.equal(j.cupom.valido, false); });
 
 // ---------- cobrança ----------

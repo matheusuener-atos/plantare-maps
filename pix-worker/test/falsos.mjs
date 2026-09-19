@@ -15,7 +15,7 @@ export function instalarFalsos(base) {
       if (E.usos.some(u => u.cupom === c.codigo && u.user_id === p_user && u.pago)) return { ok: false, motivo: 'Você já usou este cupom.' };
       if (c.so_primeira && E.compras.some(x => x.user_id === p_user && x.status === 'pago')) return { ok: false, motivo: 'Este cupom é só para a primeira compra.' };
       if (c.usos_max != null && E.usos.filter(u => u.cupom === c.codigo && u.pago && u.user_id !== p_user).length >= c.usos_max) return { ok: false, motivo: 'Os usos deste cupom acabaram.' };
-      return { ok: true, codigo: c.codigo, desconto: c.desconto ?? null, fixo: c.fixo ?? null, gratis: !!c.gratis };
+      return { ok: true, codigo: c.codigo, desconto: c.desconto ?? null, fixo: c.fixo ?? null, gratis: !!c.gratis, validade: c.validade ?? null };
     },
     plantare_reservar_cupom({ p_codigo, p_user, p_compra }) {
       const u = E.usos.find(x => x.cupom === p_codigo && x.user_id === p_user);

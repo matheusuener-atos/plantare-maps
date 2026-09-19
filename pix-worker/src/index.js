@@ -109,7 +109,7 @@ async function orcar(body, env, user) {
       const r = await rpc(env, 'plantare_cupom', { p_codigo: cod, p_user: user.id, p_ha: Math.round(ha * 100) / 100 });
       if (r && r.ok) {
         const gratis = r.gratis === true, fixo = !gratis && +r.fixo > 0 ? +r.fixo : 0, d = !gratis && !fixo ? +r.desconto || 0 : 0;
-        cupom = { codigo: r.codigo, valido: true, desconto: d, fixo: fixo || null, gratis };
+        cupom = { codigo: r.codigo, valido: true, desconto: d, fixo: fixo || null, gratis, validade: r.validade || null };
         desc = gratis ? { gratis } : fixo ? { fixo } : d;
       } else cupom = { codigo: cod, valido: false, motivo: (r && r.motivo) || 'Cupom não encontrado.' };
     }

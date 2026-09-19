@@ -376,6 +376,7 @@ kbd{font-family:var(--f-num);font-size:10.5px;border:1px solid currentColor;bord
 .cupom input{flex:1;min-width:0;background:var(--terra);border:1px solid var(--fio2);border-radius:10px;padding:9px 11px;color:var(--palha);font-family:var(--f-num);font-size:14px;text-transform:uppercase}
 .cupom .btn{min-height:40px;padding:0 14px;font-size:14px}
 .cupom-msg{font-size:12px;color:var(--poeira);margin-top:6px;min-height:18px}
+.cupom-msg .cupom-sub{display:inline-block;margin-top:3px;font:10.5px var(--f-num);letter-spacing:.08em;text-transform:uppercase;color:#c3d6b5}
 .total{display:flex;justify-content:space-between;align-items:baseline;border-top:1px solid var(--fio);border-bottom:1px solid var(--fio);padding:10px 0;margin:6px 0 14px}
 .total b{font-family:var(--f-titulo);font-size:26px;font-weight:800;font-stretch:110%}
 .aceite{display:flex;gap:10px;align-items:flex-start;font-size:13px;line-height:1.45;cursor:pointer}
@@ -9668,7 +9669,7 @@ function pgCortesia(){
   $('#pgPix').hidden=true;
   document.querySelector('#pgDetalhes .cupom').hidden=true; $('label[for="pgCupom"]').hidden=true;
   $('#pgGerar').textContent='Baixar os arquivos'; $('#pgGerar').disabled=false; $('#pgGerarMsg').textContent='';
-  $('#pgCupomMsg').textContent='Cupom de cortesia aplicado: o recibo vai para o e-mail da sua conta.';
+  pgCupomMsg('Cupom aplicado: este plano sai sem custo. O recibo vai para o e-mail da sua conta.', PG.cupomInfo||{gratis:true});
   pgContaTela(); (contaLogada()?$('#pgGerar'):$('#pgGoogle')).focus();
 }
 async function pgConfirmarCortesia(email){
@@ -9688,11 +9689,19 @@ $('#pgAplicar').addEventListener('click',async()=>{
   if(!contaLogada()){ $('#pgCupomMsg').textContent='Entre na sua conta para usar o cupom (ele vale uma vez por conta).'; pgContaTela(); return; }
   $('#pgCupomMsg').textContent='Conferindo…';
   try{ const r=await pgChamar('/preco',{polys:E.polysLL, camadas:PG.camadas, cupom:c});
+    PG.cupomInfo=r.cupom&&r.cupom.valido?r.cupom:null;
     if(r.cupom && r.cupom.valido && r.cupom.gratis && !r.preco.total){ PG.cupom=c; PG.preco=r.preco; pgCortesia(); }
-    else if(r.cupom && r.cupom.valido){ PG.cupom=c; PG.preco=r.preco; pgMostrarTotal(); $('#pgCupomMsg').textContent=r.cupom.fixo?'Cupom aplicado: esta compra sai por '+brl(r.preco.total)+'.':'Cupom aplicado: −'+Math.round(r.cupom.desconto*100)+'%.'; }
-    else { PG.cupom=''; $('#pgCupomMsg').textContent='Cupom não encontrado.'; }
+    else if(r.cupom && r.cupom.valido){ PG.cupom=c; PG.preco=r.preco; pgMostrarTotal(); pgCupomMsg(r.cupom.fixo?'Cupom aplicado: esta compra sai por '+brl(r.preco.total)+'.':'Cupom aplicado: −'+Math.round(r.cupom.desconto*100)+'%.', r.cupom); }
+    else { PG.cupom=''; $('#pgCupomMsg').textContent=(r.cupom&&r.cupom.motivo)||'Cupom não encontrado.'; }   // o motivo real: venceu, já usado, acabou…
   }catch(e){ $('#pgCupomMsg').textContent=e.message; }
 });
+/* mensagem do cupom: o efeito e, na linha de baixo, "Cortesia" ou a validade */
+function pgCupomMsg(txt, cp){
+  let sub='';
+  if(cp && cp.gratis) sub='Cortesia'+(cp.validade?' · válida até '+new Date(cp.validade).toLocaleDateString('pt-BR'):'');
+  else if(cp && cp.validade) sub='Válido até '+new Date(cp.validade).toLocaleDateString('pt-BR');
+  $('#pgCupomMsg').innerHTML=esc(txt)+(sub?'<br><span class="cupom-sub">'+esc(sub)+'</span>':'');
+}
 $('#pgCupom').addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); $('#pgAplicar').click(); } });
 $('#pgCopiar').addEventListener('click',async()=>{
   try{ await navigator.clipboard.writeText($('#pgCopia').value); $('#pgCopiar').textContent='Copiado'; }

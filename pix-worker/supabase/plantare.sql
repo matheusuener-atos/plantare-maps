@@ -81,7 +81,7 @@ begin
     select count(*) into usados from public.cupom_usos where cupom = c.codigo and pago and user_id <> p_user;
     if usados >= c.usos_max then return jsonb_build_object('ok', false, 'motivo', 'Os usos deste cupom acabaram.'); end if;
   end if;
-  return jsonb_build_object('ok', true, 'codigo', c.codigo, 'desconto', c.desconto, 'fixo', c.fixo, 'gratis', c.gratis);
+  return jsonb_build_object('ok', true, 'codigo', c.codigo, 'desconto', c.desconto, 'fixo', c.fixo, 'gratis', c.gratis, 'validade', c.validade);
 end $$;
 
 -- ---------- cupom: reserva para a compra (troca a reserva pendente anterior) ----------
