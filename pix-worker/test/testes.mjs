@@ -10,6 +10,7 @@ const ORIG = 'https://plantare.matheusuener.com.br';
 // quadrado de ~1 km x ~1 km → ~100 ha
 const d = 1000 / 111320, quad = [[-55, -12], [-55 + d / Math.cos(12 * Math.PI / 180), -12], [-55 + d / Math.cos(12 * Math.PI / 180), -12 + d], [-55, -12 + d]];
 const polys = [{ outer: quad, holes: [] }];
+const talhaoEm = x => [{ outer: quad.map(([lo, la]) => [lo - (-55) + x, la]), holes: [] }];   // o mesmo quadrado em outro lugar (outro talhão)
 const req = (path, body, o) => { o = o || {};
   const h = { 'content-type': 'application/json' }; if (o.orig !== null) h.origin = o.orig || ORIG; if (o.token) h.authorization = 'Bearer ' + o.token;
   return new Request('https://pix.matheusuener.com.br' + path, { method: o.metodo || (body ? 'POST' : 'GET'), headers: h, body: body ? JSON.stringify(body) : undefined }); };
@@ -55,7 +56,7 @@ await t('talhão com 5 mil partes é aceito', async () => {
   const muitos = []; for (let i = 0; i < 5000; i++) { const x = -55 + (i % 100) * 0.001, y = -12 + Math.floor(i / 100) * 0.001; muitos.push({ outer: [[x, y], [x + 0.0004, y], [x + 0.0004, y + 0.0004], [x, y + 0.0004]], holes: [] }); }
   assert.equal((await chama('/preco', { polys: muitos, camadas: ['linhas_ab'] })).st, 200); });
 await t('/preco ignora área mandada pelo navegador', async () => { const { j } = await chama('/preco', { polys, camadas: ['linhas_ab'], area_ha: 1 }); assert.ok(j.preco.ha > 99); });
-await t('/preco: cupom sem conta não vale', async () => { const { j } = await chama('/preco', { polys, camadas: TODAS, cupom: 'campo10' }); assert.equal(j.cupom.valido, false); assert.match(j.cupom.motivo, /Entre/); assert.equal(j.preco.cupom, 0); });
+await t('/preco: cupom sem conta também vale', async () => { const { j } = await chama('/preco', { polys, camadas: TODAS, cupom: 'campo10' }); assert.equal(j.cupom.valido, true, JSON.stringify(j.cupom)); assert.ok(j.preco.cupom > 0); });
 await t('/preco: cupom com conta vale', async () => { const { j } = await chama('/preco', { polys, camadas: ['linhas_ab', 'bordadura', 'percurso'], cupom: 'campo10' }, ANA);
   assert.ok(j.cupom.valido); assert.equal(j.preco.total, Math.round(j.preco.subtotal * 0.9 * 100) / 100); });
 await t('/preco: cupom de área mínima', async () => { const { j } = await chama('/preco', { polys, camadas: TODAS, cupom: 'GRANDE' }, ANA); assert.equal(j.cupom.valido, false); assert.match(j.cupom.motivo, /500/); });
@@ -94,7 +95,7 @@ await t('cupom: depois de pago, não vale de novo na mesma conta', async () => {
   assert.equal((await chama('/cobranca', { plano: 'B2', polys, camadas: TODAS, cupom: 'PRIMEIRA' }, BETO)).st, 400); });
 await t('cupom: usos_max conta contas diferentes', async () => {
   const p = (await chama('/cobranca', { plano: 'U1', polys, camadas: ['linhas_ab'], cupom: 'UNICO' }, ANA)).j.id; F.pagar(p); await chama('/status/' + p, null, ANA);
-  const { j } = await chama('/preco', { polys, camadas: TODAS, cupom: 'UNICO' }, BETO); assert.equal(j.cupom.valido, false); assert.match(j.cupom.motivo, /acabaram/); });
+  const { j } = await chama('/preco', { polys: talhaoEm(-49), camadas: TODAS, cupom: 'UNICO' }, BETO); assert.equal(j.cupom.valido, false); assert.match(j.cupom.motivo, /acabaram/); });
 
 // ---------- cupons de preço fixo e cortesia ----------
 await t('tabela: cupom de preço fixo nunca passa do preço normal', () => { assert.equal(calcularPreco(100, ['linhas_ab'], { fixo: 2 }).total, 2); assert.equal(calcularPreco(0.2, ['manobras'], { fixo: 2 }).total, 1.2); });
@@ -106,7 +107,7 @@ await t('/cobranca com cupom de cortesia não chama o Mercado Pago', async () =>
 const enviados = []; const envEmail = Object.assign({}, env, { AVISO_EMAIL: 'dono@exemplo.com', EMAIL: { send: async m => { enviados.push(m); return { messageId: 'm' + enviados.length }; } } });
 const chamaE = async (path, body, o, e) => { const r = await worker.fetch(req(path, body, o), e || envEmail); return { st: r.status, j: await r.json().catch(() => null) }; };
 let cort;
-await t('/cortesia exige conta', async () => { assert.equal((await chamaE('/cortesia', { plano: 'x', polys, camadas: ['linhas_ab'], cupom: 'AMIGO' })).st, 401); });
+await t('/cortesia sem conta pede e-mail', async () => { const { st, j } = await chamaE('/cortesia', { plano: 'x', polys, camadas: ['linhas_ab'], cupom: 'AMIGO' }); assert.equal(st, 400); assert.match(j.motivo, /e-mail/); });
 await t('/cortesia registra compra de R$ 0 na conta, manda recibo e cópia', async () => { const n = Object.keys(F.orders).length;
   const { st, j } = await chamaE('/cortesia', { plano: '1LKP5C', polys: plano.polys, camadas: ['linhas_ab', 'bordadura'], cupom: 'amigo', email: 'outro@x.com' }, ANA);
   assert.equal(st, 200, JSON.stringify(j)); cort = j.id; assert.match(cort, /^CORT-/); assert.equal(j.recibo, true); assert.equal(Object.keys(F.orders).length, n);
@@ -128,7 +129,21 @@ await t('sem conta: Pix com e-mail do formulário e chave de acesso', async () =
   assert.equal(st, 200, JSON.stringify(j)); visita = j; assert.match(j.acesso, /^[0-9a-f]{48}$/);
   const c = F.compras.find(x => x.id === j.id); assert.equal(c.user_id, null); assert.equal(c.email, 'visita@fazenda.com'); assert.match(c.acesso_hash, /^[0-9a-f]{64}$/); assert.notEqual(c.acesso_hash, j.acesso);
   assert.equal(F.orders[j.id].payer.email, 'visita@fazenda.com'); });
-await t('sem conta: cupom exige conta', async () => { const { st, j } = await chama('/cobranca', { plano: 'V2', polys, camadas: TODAS, email: 'a@b.com', cupom: 'CAMPO10' }); assert.equal(st, 400); assert.match(j.motivo, /conta/); });
+await t('sem conta: Pix com cupom de desconto', async () => { const { st, j } = await chama('/cobranca', { plano: 'V2', polys: talhaoEm(-50), camadas: TODAS, email: 'cupom@b.com', cupom: 'CAMPO10' });
+  assert.equal(st, 200, JSON.stringify(j)); assert.equal(j.cupom.codigo, 'CAMPO10'); const u = F.usos.find(x => x.compra_id === j.id); assert.equal(u.user_id, null); assert.equal(u.email, 'cupom@b.com'); });
+let cortV;
+await t('sem conta: cortesia com e-mail, chave de acesso e recibo', async () => { enviados.length = 0;
+  const { st, j } = await chamaE('/cortesia', { plano: 'CV1', polys: talhaoEm(-51), camadas: ['linhas_ab'], cupom: 'amigo', email: 'Visita2@Fazenda.com' });
+  assert.equal(st, 200, JSON.stringify(j)); cortV = j; assert.match(j.acesso, /^[0-9a-f]{48}$/);
+  const c = F.compras.find(x => x.id === j.id); assert.equal(c.user_id, null); assert.equal(c.email, 'visita2@fazenda.com'); assert.equal(c.status, 'pago'); assert.equal(c.acesso_hash.length, 64);
+  assert.equal(enviados[0].to, 'visita2@fazenda.com'); assert.match(enviados[1].subject, /sem conta/); });
+await t('sem conta: mesmo e-mail não usa a cortesia de novo', async () => { const { st, j } = await chamaE('/cortesia', { plano: 'CV2', polys: talhaoEm(-52), camadas: ['linhas_ab'], cupom: 'AMIGO', email: 'visita2@fazenda.com' }); assert.equal(st, 400); assert.match(j.motivo, /já usou/); });
+await t('sem conta: a conta com o mesmo e-mail também já usou', async () => { F.entrar('tok-v2-0123456789abcdef', 'u-v2', 'visita2@fazenda.com');
+  const { j } = await chama('/preco', { polys: talhaoEm(-53), camadas: TODAS, cupom: 'AMIGO' }, { token: 'tok-v2-0123456789abcdef' }); assert.equal(j.cupom.valido, false); assert.match(j.cupom.motivo, /já usou/); });
+await t('sem conta: outro e-mail no mesmo talhão não usa o cupom de novo', async () => { const { st, j } = await chamaE('/cortesia', { plano: 'CV3', polys: talhaoEm(-51), camadas: ['linhas_ab'], cupom: 'AMIGO', email: 'outra@pessoa.com' }); assert.equal(st, 400); assert.match(j.motivo, /talhão/); });
+await t('sem conta: cortesia aparece paga só com a chave', async () => { const st = async k => { const h = { origin: ORIG }; if (k) h['x-plantare-acesso'] = k;
+    const r = await worker.fetch(new Request('https://pix.matheusuener.com.br/status/' + cortV.id, { headers: h }), env); return { st: r.status, j: await r.json() }; };
+  const ok = await st(cortV.acesso); assert.equal(ok.st, 200, JSON.stringify(ok.j)); assert.equal(ok.j.pago, true); assert.notEqual((await st(null)).st, 200); assert.notEqual((await st('0'.repeat(48))).st, 200); });
 const comChave = (k) => ({ orig: ORIG, chave: k });
 const statusCom = async (id, k, o) => { const h = { origin: ORIG }; if (k) h['x-plantare-acesso'] = k; if (o && o.token) h.authorization = 'Bearer ' + o.token;
   const r = await worker.fetch(new Request('https://pix.matheusuener.com.br/status/' + id, { headers: h }), env); return { st: r.status, j: await r.json() }; };

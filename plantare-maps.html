@@ -9583,9 +9583,9 @@ function pgConfigurar(){
   pgContaTela();
 }
 /* login / conta dentro da etapa 02 */
-/* Conta é opcional: sem ela, o Pix pede só o e-mail do comprovante. Só o cupom (um uso por conta) exige entrar. */
+/* Conta é opcional: sem ela, o Pix (e o cupom, inclusive cortesia) pede só o e-mail do comprovante. */
 function pgContaTela(){
-  const logado=contaLogada(), ativo=(PG.modo==='pix' || PG.cortesia) && !(PG.pedido && !PG.cortesia), exige=!!PG.cortesia;
+  const logado=contaLogada(), ativo=(PG.modo==='pix' || PG.cortesia) && !(PG.pedido && !PG.cortesia), exige=false;
   const visita=ativo && !logado && !exige;
   $('#pgLogin').hidden=!(ativo && !logado && (exige || PG.mostrarLogin));
   $('#pgLoginNota').textContent=exige?'O cupom vale uma vez por conta: entre para usar.':'Entre para guardar a compra na sua conta e baixar de novo em qualquer aparelho.';
@@ -9635,15 +9635,15 @@ async function pgChamar(rota, corpo){
   return j;
 }
 async function pgGerarPix(){
-  if(PG.cortesia){ if(!contaLogada()){ pgContaTela(); $('#pgGoogle').focus(); return; } return pgConfirmarCortesia(contaEmail()); }
-  // conta é opcional: sem ela, vale o e-mail do comprovante
+  // conta é opcional: sem ela, vale o e-mail do comprovante (também na cortesia)
   let email;
-  if(contaLogada()){ email=contaEmail(); contaSalvarTalhaoAgora().catch(()=>{}); }   // com conta: o talhão vai para "Meus talhões"
+  if(contaLogada()){ email=contaEmail(); if(!PG.cortesia) contaSalvarTalhaoAgora().catch(()=>{}); }   // com conta: o talhão vai para "Meus talhões"
   else{
     email=$('#pgEmail').value.trim();
     if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ $('#pgGerarMsg').textContent='Informe um e-mail válido para o comprovante.'; $('#pgEmail').focus(); return; }
     try{ localStorage.setItem('plantare_email', email); }catch(e){}
   }
+  if(PG.cortesia) return pgConfirmarCortesia(email);
   $('#pgGerar').disabled=true; $('#pgGerarMsg').textContent='Gerando o Pix…';
   try{
     const r=await pgChamar('/cobranca', {plano:PG.id, polys:E.polysLL, camadas:PG.camadas, cupom:PG.cupom||undefined, email:contaLogada()?undefined:email});
@@ -9710,15 +9710,17 @@ function pgCortesia(){
   $('#pgPix').hidden=true;
   document.querySelector('#pgDetalhes .cupom').hidden=true; $('label[for="pgCupom"]').hidden=true;
   $('#pgGerar').textContent='Baixar os arquivos'; $('#pgGerar').disabled=false; $('#pgGerarMsg').textContent='';
-  pgCupomMsg('Cupom aplicado: este plano sai sem custo. O recibo vai para o e-mail da sua conta.', PG.cupomInfo||{gratis:true});
-  pgContaTela(); (contaLogada()?$('#pgGerar'):$('#pgGoogle')).focus();
+  pgCupomMsg('Cupom aplicado: este plano sai sem custo. O recibo vai para '+(contaLogada()?'o e-mail da sua conta.':'o seu e-mail.'), PG.cupomInfo||{gratis:true});
+  pgContaTela(); (contaLogada()||$('#pgEmail').value.trim()?$('#pgGerar'):$('#pgEmail')).focus();
 }
 async function pgConfirmarCortesia(email){
   $('#pgGerar').disabled=true; $('#pgGerarMsg').textContent='Liberando…';
   try{
-    contaSalvarTalhaoAgora().catch(()=>{});
-    const r=await pgChamar('/cortesia', {plano:PG.id, polys:E.polysLL, camadas:PG.camadas, cupom:PG.cupom});
-    PG.pedido=r.id; if(CONTA.compras) CONTA.compras.unshift({id:r.id, area_hash:AREA_HASH.valor, camadas:r.camadas, plano:r.plano});
+    if(contaLogada()) contaSalvarTalhaoAgora().catch(()=>{});
+    const r=await pgChamar('/cortesia', {plano:PG.id, polys:E.polysLL, camadas:PG.camadas, cupom:PG.cupom, email:contaLogada()?undefined:email});
+    PG.pedido=r.id; PG.acesso=r.acesso||null; if(CONTA.compras) CONTA.compras.unshift({id:r.id, area_hash:AREA_HASH.valor, camadas:r.camadas, plano:r.plano});
+    if(r.acesso){ await hashLocalDoTalhao(); visitaGuardar({id:r.id, acesso:r.acesso, area_hash:AREA_HASH.valor, camadas:(r.camadas||PG.camadas).slice(), email, pago:true, quando:new Date().toISOString()}); }
+    $('#pgEmailBox').hidden=true;
     $('#pgGerarMsg').textContent=r.recibo?'Recibo enviado para '+email+'.':'';
     pagamentoConfirmado();
   }catch(e){ $('#pgGerarMsg').textContent=e.message; $('#pgGerar').disabled=false; }
@@ -9727,9 +9729,9 @@ $('#pgAplicar').addEventListener('click',async()=>{
   const c=$('#pgCupom').value.trim();
   if(!c){ $('#pgCupomMsg').textContent='Digite o código do cupom.'; return; }
   if(PG.modo!=='pix'){ $('#pgCupomMsg').textContent='Cupons valem só no pagamento real.'; return; }
-  if(!contaLogada()){ $('#pgCupomMsg').textContent='Entre na sua conta para usar o cupom (ele vale uma vez por conta).'; PG.mostrarLogin=true; pgContaTela(); return; }
   $('#pgCupomMsg').textContent='Conferindo…';
-  try{ const r=await pgChamar('/preco',{polys:E.polysLL, camadas:PG.camadas, cupom:c});
+  const em=contaLogada()?undefined:($('#pgEmail').value.trim()||undefined);   // sem conta: o e-mail já digitado ajuda a conferir o "uma vez por pessoa"
+  try{ const r=await pgChamar('/preco',{polys:E.polysLL, camadas:PG.camadas, cupom:c, email:em});
     PG.cupomInfo=r.cupom&&r.cupom.valido?r.cupom:null;
     if(r.cupom && r.cupom.valido && r.cupom.gratis && !r.preco.total){ PG.cupom=c; PG.preco=r.preco; pgCortesia(); }
     else if(r.cupom && r.cupom.valido){ PG.cupom=c; PG.preco=r.preco; pgMostrarTotal(); pgCupomMsg(r.cupom.fixo?'Cupom aplicado: esta compra sai por '+brl(r.preco.total)+'.':'Cupom aplicado: −'+Math.round(r.cupom.desconto*100)+'%.', r.cupom); }

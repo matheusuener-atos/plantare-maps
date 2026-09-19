@@ -2,12 +2,12 @@
 
    Rotas                                                        conta?
      GET  /saude          → teste rápido                          não
-     POST /preco          → orçamento (+ cupom da conta)          opcional   {polys, camadas, cupom?}
+     POST /preco          → orçamento (+ cupom)                   opcional   {polys, camadas, cupom?, email?}
      GET  /eu             → compras pagas da conta                sim
-     POST /cobranca       → cria o Pix, registra a compra         sim        {plano, polys, camadas, cupom?}
-     POST /cortesia       → cupom de cortesia: registra, recibo   sim        {plano, polys, camadas, cupom}
-     GET  /status/:id     → pago ou não (e registra se pagou)     sim
-     POST /pacote         → gera os arquivos pagos                sim        {pedido, entrada}
+     POST /cobranca       → cria o Pix, registra a compra         opcional   {plano, polys, camadas, cupom?, email (sem conta)}
+     POST /cortesia       → cupom de cortesia: registra, recibo   opcional   {plano, polys, camadas, cupom, email (sem conta)}
+     GET  /status/:id     → pago ou não (e registra se pagou)     conta ou chave (x-plantare-acesso)
+     POST /pacote         → gera os arquivos pagos                conta ou chave {pedido, entrada, acesso?}
      POST /webhook        → aviso do Mercado Pago (x-signature)   assinatura
 
    Segredos (npx wrangler secret put …): MP_ACCESS_TOKEN, MP_WEBHOOK_SECRET, SUPABASE_SERVICE_KEY
@@ -20,7 +20,8 @@
      · o preço sai daqui, do polígono do talhão (a área que o navegador manda não vale);
      · os arquivos pagos (KML, KMZ, AB, rota, SHP, GeoJSON, CSV) só existem aqui: o app não tem o gerador;
      · cada compra é de uma conta e de um talhão (impressão digital do polígono); o arquivo sai carimbado;
-     · cupom (desconto, preço fixo ou cortesia) vale uma vez por conta, com as regras da tabela "cupons";
+     · cupom (desconto, preço fixo ou cortesia) vale uma vez por pessoa (conta ou e-mail) e uma vez por talhão,
+       com as regras da tabela "cupons"; não precisa de conta;
      · tokens e chaves só como segredo do Worker. */
 import { calcularPreco, areaPoligonos, PRECO, NOMES_CAMADAS } from './preco.js';
 import { gerarPacote } from './exportar.js';
@@ -98,6 +99,10 @@ async function hashTalhao(polys) {
 }
 
 /* ---------------- preço e cupom ---------------- */
+/* e-mail de quem compra: o da conta, ou o do formulário (sem conta) */
+const EMAIL_OK = e => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) && e.length <= 254;
+const emailDe = (body, user) => user ? String(user.email || '').toLowerCase() : String((body && body.email) || '').trim().toLowerCase();
+/* cupom vale sem conta: "uma vez por pessoa" é pela conta ou pelo e-mail, e cada cupom vale uma vez por talhão */
 async function orcar(body, env, user) {
   const erro = validarPolys(body.polys); if (erro) throw new Falha(erro);
   const ha = areaPoligonos(body.polys) / 1e4;
@@ -105,18 +110,18 @@ async function orcar(body, env, user) {
   const cod = String(body.cupom || '').trim().toUpperCase();
   let cupom = null, desc = 0;
   if (cod) {
-    if (!user) cupom = { codigo: cod, valido: false, motivo: 'Entre na sua conta para usar cupom.' };
-    else {
-      const r = await rpc(env, 'plantare_cupom', { p_codigo: cod, p_user: user.id, p_ha: Math.round(ha * 100) / 100 });
-      if (r && r.ok) {
-        const gratis = r.gratis === true, fixo = !gratis && +r.fixo > 0 ? +r.fixo : 0, d = !gratis && !fixo ? +r.desconto || 0 : 0;
-        cupom = { codigo: r.codigo, valido: true, desconto: d, fixo: fixo || null, gratis, validade: r.validade || null };
-        desc = gratis ? { gratis } : fixo ? { fixo } : d;
-      } else cupom = { codigo: cod, valido: false, motivo: (r && r.motivo) || 'Cupom não encontrado.' };
-    }
+    const email = emailDe(body, user);
+    const r = await rpc(env, 'plantare_cupom_v2', { p_codigo: cod, p_user: user ? user.id : null, p_email: EMAIL_OK(email) ? email : null,
+      p_ha: Math.round(ha * 100) / 100, p_area: await hashTalhao(body.polys) });
+    if (r && r.ok) {
+      const gratis = r.gratis === true, fixo = !gratis && +r.fixo > 0 ? +r.fixo : 0, d = !gratis && !fixo ? +r.desconto || 0 : 0;
+      cupom = { codigo: r.codigo, valido: true, desconto: d, fixo: fixo || null, gratis, validade: r.validade || null };
+      desc = gratis ? { gratis } : fixo ? { fixo } : d;
+    } else cupom = { codigo: cod, valido: false, motivo: (r && r.motivo) || 'Cupom não encontrado.' };
   }
   return { preco: calcularPreco(ha, body.camadas, desc), cupom };
 }
+const novaChave = () => [...crypto.getRandomValues(new Uint8Array(24))].map(b => b.toString(16).padStart(2, '0')).join('');
 /* referência curta que volta na order: plantare-plano-camadas-centésimos de ha (ex.: plantare-1LKP5C-ABP-282).
    A Orders API só aceita letras, números, - e _ (máx. 64). */
 const COD = { linhas_ab: 'A', bordadura: 'B', percurso: 'P', manobras: 'M' };
@@ -149,6 +154,7 @@ async function mpCancelar(id, env) {
 }
 
 async function criarCobranca(body, env, user) {
+  if (!user && !EMAIL_OK(emailDe(body, null))) throw new Falha('Informe um e-mail válido para o comprovante.');
   const o = await orcar(body, env, user), p = o.preco;
   if (o.cupom && !o.cupom.valido) throw new Falha(o.cupom.motivo || 'Cupom inválido.');
   if (o.cupom && o.cupom.gratis) throw new Falha('Cupom de cortesia: use o botão de cortesia (não precisa de Pix).');
@@ -156,9 +162,9 @@ async function criarCobranca(body, env, user) {
   if (p.total < 1) throw new Falha('Valor abaixo do mínimo do Pix.');
   if (!bancoPronto(env)) throw new Falha('Serviço sem banco configurado.', 503);
   // sem conta: o e-mail vem do formulário e a compra fica presa a uma chave que só o navegador de quem pagou guarda
-  const email = user ? user.email : String(body.email || '').trim().toLowerCase();
-  if (!user && (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254)) throw new Falha('Informe um e-mail válido para o comprovante.');
-  const acesso = user ? null : [...crypto.getRandomValues(new Uint8Array(24))].map(b => b.toString(16).padStart(2, '0')).join('');
+  const email = user ? user.email : emailDe(body, null);
+  if (!user && !EMAIL_OK(email)) throw new Falha('Informe um e-mail válido para o comprovante.');
+  const acesso = user ? null : novaChave();
   const plano = limparPlano(body.plano);
   const area = await hashTalhao(body.polys);
   const valor = p.total.toFixed(2);
@@ -180,7 +186,7 @@ async function criarCobranca(body, env, user) {
     plano, area_hash: area, ha: p.ha, camadas: p.camadas, valor: p.total, cupom: o.cupom ? o.cupom.codigo : null } });
   if (o.cupom) {
     try {
-      const antiga = await rpc(env, 'plantare_reservar_cupom', { p_codigo: o.cupom.codigo, p_user: user.id, p_compra: String(d.id) });
+      const antiga = await rpc(env, 'plantare_reservar_cupom_v2', { p_codigo: o.cupom.codigo, p_user: user ? user.id : null, p_email: emailDe(body, user), p_compra: String(d.id) });
       if (antiga) { await mpCancelar(antiga, env); await sb(env, 'compras?id=eq.' + q(antiga) + '&status=eq.pendente', { method: 'PATCH', prefer: 'return=minimal', body: { status: 'cancelado' } }); }
     } catch (e) {
       await mpCancelar(d.id, env);
@@ -197,27 +203,32 @@ async function enviarEmail(env, msg) {
   try { await env.EMAIL.send(Object.assign({ from: env.EMAIL_DE || 'nao-responda@plantaremaps.com.br' }, msg)); return true; }
   catch (e) { console.log('e-mail não enviado', e && (e.code || e.message)); return false; }
 }
-/* Cupom de cortesia: conferido aqui, sem Mercado Pago. Vira uma compra paga de R$ 0,00 da conta
-   (é ela que libera os arquivos em /pacote); recibo para a conta e cópia para AVISO_EMAIL. */
+/* Cupom de cortesia: conferido aqui, sem Mercado Pago. Vira uma compra paga de R$ 0,00 (é ela que libera
+   os arquivos em /pacote), da conta ou, sem conta, presa a uma chave de acesso; recibo e cópia para AVISO_EMAIL. */
 async function cortesia(body, env, user) {
+  if (!bancoPronto(env)) throw new Falha('Serviço sem banco configurado.', 503);
+  const email = emailDe(body, user);
+  if (!user && !EMAIL_OK(email)) throw new Falha('Informe um e-mail válido para receber o recibo.');
   const o = await orcar(body, env, user), p = o.preco;
   if (!o.cupom || !o.cupom.valido || !o.cupom.gratis) throw new Falha((o.cupom && o.cupom.motivo) || 'Cupom de cortesia inválido.');
   if (!p.camadas.length) throw new Falha('Escolha ao menos uma camada.');
   const plano = limparPlano(body.plano), id = 'CORT-' + crypto.randomUUID().replace(/-/g, '').slice(0, 20);
+  const acesso = user ? null : novaChave();
   await sb(env, 'compras', { method: 'POST', prefer: 'return=minimal', body: {
-    id, user_id: user.id, email: user.email, plano, area_hash: await hashTalhao(body.polys), ha: p.ha, camadas: p.camadas, valor: 0, cupom: o.cupom.codigo } });
-  try { await rpc(env, 'plantare_reservar_cupom', { p_codigo: o.cupom.codigo, p_user: user.id, p_compra: id }); }
+    id, user_id: user ? user.id : null, email, acesso_hash: acesso ? await sha256(acesso) : null,
+    plano, area_hash: await hashTalhao(body.polys), ha: p.ha, camadas: p.camadas, valor: 0, cupom: o.cupom.codigo } });
+  try { await rpc(env, 'plantare_reservar_cupom_v2', { p_codigo: o.cupom.codigo, p_user: user ? user.id : null, p_email: email, p_compra: id }); }
   catch (e) { await sb(env, 'compras?id=eq.' + q(id), { method: 'PATCH', prefer: 'return=minimal', body: { status: 'cancelado' } }); throw new Falha('Você já usou este cupom.'); }
   await rpc(env, 'plantare_confirmar', { p_compra: id });
   const camadas = p.camadas.map(c => NOMES_CAMADAS[c]).join(', ');
   const quando = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
   const linhas = ['Plano #' + plano, p.ha.toFixed(2).replace('.', ',') + ' ha', 'Camadas: ' + camadas, 'Cupom de cortesia: ' + o.cupom.codigo, 'Valor: R$ 0,00', 'Pedido ' + id, quando];
-  const recibo = await enviarEmail(env, { to: user.email, subject: 'Plantare Maps · seu plano #' + plano,
+  const recibo = await enviarEmail(env, { to: email, subject: 'Plantare Maps · seu plano #' + plano,
     text: 'Obrigado por testar o Plantare Maps!\n\n' + linhas.join('\n') + '\n\nConfira divisas, obstáculos e raio de giro no campo antes de aplicar.',
     html: '<p>Obrigado por testar o <b>Plantare Maps</b>!</p><p>' + linhas.map(escH).join('<br>') + '</p><p>Confira divisas, obstáculos e raio de giro no campo antes de aplicar.</p>' });
-  await enviarEmail(env, { to: env.AVISO_EMAIL, subject: 'Cortesia usada · ' + o.cupom.codigo + ' · ' + user.email,
-    text: [user.email].concat(linhas, 'Recibo enviado: ' + (recibo ? 'sim' : 'não')).join('\n') });
-  return json({ ok: true, id, pago: true, plano, camadas: p.camadas, recibo });
+  await enviarEmail(env, { to: env.AVISO_EMAIL, subject: 'Cortesia usada · ' + o.cupom.codigo + ' · ' + email + (user ? '' : ' (sem conta)'),
+    text: [email + (user ? '' : ' (sem conta)')].concat(linhas, 'Recibo enviado: ' + (recibo ? 'sim' : 'não')).join('\n') });
+  return json(Object.assign({ ok: true, id, pago: true, plano, camadas: p.camadas, recibo }, acesso ? { acesso } : {}));
 }
 
 /* a compra é de quem está logado nela OU de quem tem a chave de acesso (compra sem conta) */
@@ -354,7 +365,7 @@ export default {
       if (rota === '/conta/excluir' && req.method === 'POST') { const u = await exigirUsuario(req, env); return com(await excluirConta(await req.json().catch(() => ({})), env, u)); }
       // Pix e download: com conta ou sem (sem conta vale a chave de acesso guardada no navegador)
       if (rota === '/cobranca' && req.method === 'POST') { const u = await usuario(req, env); return com(await criarCobranca(await req.json(), env, u)); }
-      if (rota === '/cortesia' && req.method === 'POST') { const u = await exigirUsuario(req, env); return com(await cortesia(await req.json(), env, u)); }
+      if (rota === '/cortesia' && req.method === 'POST') { const u = await usuario(req, env); return com(await cortesia(await req.json(), env, u)); }
       if (rota === '/pacote' && req.method === 'POST') { if (!bancoPronto(env)) throw new Falha('Serviço sem banco configurado.', 503); const u = await usuario(req, env); return com(await entregar(await req.json(), env, u)); }
       const m = rota.match(/^\/status\/([^/]+)$/);
       if (m && req.method === 'GET') { if (!bancoPronto(env)) throw new Falha('Serviço sem banco configurado.', 503); const u = await usuario(req, env); return com(await consultar(decodeURIComponent(m[1]), env, u, req.headers.get('x-plantare-acesso'))); }

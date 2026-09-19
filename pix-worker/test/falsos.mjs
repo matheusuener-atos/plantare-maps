@@ -22,6 +22,26 @@ export function instalarFalsos(base) {
       if (u) { if (u.pago) throw Object.assign(new Error('cupom já usado'), { st: 400 }); const a = u.compra_id; u.compra_id = p_compra; return a !== p_compra ? a : null; }
       E.usos.push({ cupom: p_codigo, user_id: p_user, compra_id: p_compra, pago: false }); return null;
     },
+    // v2 (005_cupom_sem_conta.sql): a pessoa é a conta OU o e-mail; cada cupom vale uma vez por talhão
+    plantare_cupom_v2({ p_codigo, p_user, p_email, p_ha, p_area }) {
+      const c = E.cupons.find(x => x.codigo === String(p_codigo).trim().toUpperCase()), em = p_email ? String(p_email).trim().toLowerCase() : null;
+      const mesma = u => (p_user && u.user_id === p_user) || (em && u.email === em);
+      if (!c || !c.ativo) return { ok: false, motivo: 'Cupom não encontrado.' };
+      if (c.validade && Date.parse(c.validade) < Date.now()) return { ok: false, motivo: 'Este cupom venceu.' };
+      if (c.area_min != null && p_ha < c.area_min) return { ok: false, motivo: 'Este cupom vale a partir de ' + c.area_min + ' ha.' };
+      if (E.usos.some(u => u.cupom === c.codigo && u.pago && mesma(u))) return { ok: false, motivo: 'Você já usou este cupom.' };
+      if (p_area && E.usos.some(u => u.cupom === c.codigo && u.pago && (E.compras.find(k => k.id === u.compra_id) || {}).area_hash === p_area)) return { ok: false, motivo: 'Este cupom já foi usado neste talhão.' };
+      if (c.so_primeira && E.compras.some(x => x.status === 'pago' && ((p_user && x.user_id === p_user) || (em && String(x.email).toLowerCase() === em)))) return { ok: false, motivo: 'Este cupom é só para a primeira compra.' };
+      if (c.usos_max != null && E.usos.filter(u => u.cupom === c.codigo && u.pago && !mesma(u)).length >= c.usos_max) return { ok: false, motivo: 'Os usos deste cupom acabaram.' };
+      return { ok: true, codigo: c.codigo, desconto: c.desconto ?? null, fixo: c.fixo ?? null, gratis: !!c.gratis, validade: c.validade ?? null };
+    },
+    plantare_reservar_cupom_v2({ p_codigo, p_user, p_email, p_compra }) {
+      const em = p_email ? String(p_email).trim().toLowerCase() : null;
+      if (!p_user && !em) throw Object.assign(new Error('sem dono'), { st: 400 });
+      const u = E.usos.find(x => x.cupom === p_codigo && (p_user ? x.user_id === p_user : (!x.user_id && x.email === em)));
+      if (u) { if (u.pago) throw Object.assign(new Error('cupom já usado'), { st: 400 }); const a = u.compra_id; u.compra_id = p_compra; u.email = em || u.email; return a !== p_compra ? a : null; }
+      E.usos.push({ cupom: p_codigo, user_id: p_user || null, email: em, compra_id: p_compra, pago: false }); return null;
+    },
     plantare_confirmar({ p_compra }) {
       const c = E.compras.find(x => x.id === p_compra); if (c) { c.status = 'pago'; c.pago_em = c.pago_em || new Date().toISOString(); }
       E.usos.filter(u => u.compra_id === p_compra).forEach(u => u.pago = true); return null;
