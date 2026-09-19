@@ -6884,7 +6884,7 @@ setInterval(atualizarLegenda, 30000);
 /* Zoom máximo. A Esri devolve a imagem "Map data not yet available" onde não tem foto
    naquele nível. Por isso a fonte para no último nível que existe (o mapa só amplia
    a imagem dali para cima) e o zoom da tela para um nível acima. */
-const ZOOM={fonte:17, verificado:null};
+const ZOOM={fonte:17, verificado:null, pronto:Promise.resolve()};
 function tileDe(lon,lat,z){
   const n=Math.pow(2,z), la=lat*Math.PI/180;
   return {x:Math.floor((lon+180)/360*n), y:Math.floor((1-Math.log(Math.tan(la)+1/Math.cos(la))/Math.PI)/2*n)};
@@ -6902,9 +6902,13 @@ async function ajustarZoomMaximo(lon,lat){
   if(ZOOM.verificado===chave) return;
   ZOOM.verificado=chave;
   let nivel=17;
-  try{
-    for(const z of [19,18,17,16,15]){ if(await temImagem(lon,lat,z)){ nivel=z; break; } nivel=z-1; }
-  }catch(e){ nivel=17; }        // sem resposta: fica no nível seguro
+  // as cinco consultas saem juntas (antes era uma de cada vez, até 20 s); a leitura segue a mesma ordem de antes
+  const res=await Promise.allSettled([19,18,17,16,15].map(z=>temImagem(lon,lat,z)));
+  for(let i=0;i<res.length;i++){
+    if(res[i].status==='rejected'){ nivel=17; break; }   // sem resposta: fica no nível seguro
+    if(res[i].value){ nivel=19-i; break; }
+    nivel=18-i;
+  }
   if(ZOOM.verificado!==chave) return;
   nivel=Math.max(13,Math.min(19,nivel));
   const m=MAPA.map;
@@ -6919,6 +6923,48 @@ async function ajustarZoomMaximo(lon,lat){
     m.addLayer({id:'sat', type:'raster', source:'sat', paint:pintura}, antes);
   }
   m.setMaxZoom(nivel+1);
+}
+/* Pré-carregamento do satélite. O voo desenha a câmera quadro a quadro e o mapa só pede a imagem
+   quando chega em cada lugar; o pouso e a vitrine apareciam borrados. Aqui as imagens dessas vistas são
+   pedidas antes, e a Esri deixa o navegador guardá-las (1 dia): o mapa as encontra prontas.
+   A Esri responde em HTTP/1.1 (6 conexões por servidor): a pré-carga usa só 2, com prioridade baixa,
+   para não disputar com o que o mapa baixa durante o voo. MapLibre usa, para raster de 256 px, o nível zoom+1. */
+const PRE={feitos:new Set(), fila:[], ativos:0};
+const nivelSat=zoom=>Math.max(0, Math.min(ZOOM.fonte, Math.floor(zoom+1)));
+function preTiles(lon, lat, z, rx, ry){
+  z=Math.max(0, Math.min(ZOOM.fonte, z)); const n=Math.pow(2,z), t=tileDe(lon,lat,z);
+  for(let dy=-ry; dy<=ry; dy++) for(let dx=-rx; dx<=rx; dx++){
+    const x=((t.x+dx)%n+n)%n, y=t.y+dy; if(y<0 || y>=n) continue;
+    const u='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/'+z+'/'+y+'/'+x;
+    if(!PRE.feitos.has(u) && PRE.fila.length<400){ PRE.feitos.add(u); PRE.fila.push(u); }
+  }
+}
+function preBaixar(){
+  while(PRE.ativos<2 && PRE.fila.length){
+    const u=PRE.fila.shift(); PRE.ativos++;
+    fetch(u,{mode:'cors', priority:'low'}).then(r=>r.arrayBuffer()).catch(()=>{}).finally(()=>{ PRE.ativos--; preBaixar(); });
+  }
+}
+function preRaio(){ const el=MAPA.map.getContainer(), W=el.clientWidth||innerWidth, H=el.clientHeight||innerHeight;
+  return [Math.ceil(W/512)+1, Math.ceil(H/512)+1]; }      // meia tela em tiles (cada tile ocupa 256–512 px)
+/* na decolagem: o pouso e o reenquadramento logo depois dele (pousar → enquadrar a 30° e a 0°, com a margem do painel) */
+function preCarregarVoo(alvo){
+  if(!navigator.onLine) return;
+  const m=MAPA.map, [rx,ry]=preRaio(); PRE.fila=[];
+  const zp=nivelSat(alvo.zoom); preTiles(alvo.center[0],alvo.center[1],zp,rx,ry+1);
+  for(const [pitch,bearing] of [[30,-8],[0,0]]) try{
+    const antes=m.getPadding(); m.setPadding(margens()); const cam=m.cameraForBounds(E.bbox,{padding:12,bearing}); m.setPadding(antes);
+    if(cam) preTiles(cam.center.lng,cam.center.lat,nivelSat(Math.min(17.5,ZOOM.fonte+.5,cam.zoom-(pitch>20?.35:0))),rx+1,ry);
+  }catch(e){ /* sem enquadramento: fica o pouso */ }
+  preTiles(alvo.center[0],alvo.center[1],zp-1,rx,ry);
+  preBaixar();
+}
+/* depois do pouso, com o mapa parado e a conexão livre: a vitrine (talhão colorido, inclinada a 58°) */
+function preCarregarVitrine(){
+  if(!navigator.onLine || !E.centro) return;
+  const [rx,ry]=preRaio(), v=vistaVitrine();
+  preTiles(E.centro[0],E.centro[1],nivelSat(v.zoom),rx+1,ry+1); preTiles(E.centro[0],E.centro[1],nivelSat(v.zoom)-1,rx,ry);
+  preBaixar();
 }
 const COR={luz:'#5BE38A', cerca:'#8DF2B0', linha:'#D6F8E1', manobra:'#E9B45A', obst:'#FF7A6B', cobre:'#FF4B3E', rastro:'#FF2D20', lateral:'#5BE38A', barra:'#FFD24A'};
 const VAZIO={type:'FeatureCollection', features:[]};
@@ -7208,7 +7254,7 @@ function carregarKML(nome, texto){
   for(const p of E.polysLL) for(const q of p.outer){ sx+=q[0]; sy+=q[1]; n++;
     lo0=Math.min(lo0,q[0]); lo1=Math.max(lo1,q[0]); la0=Math.min(la0,q[1]); la1=Math.max(la1,q[1]); }
   E.centro=[sx/n, sy/n]; E.bbox=[[lo0,la0],[lo1,la1]];
-  ajustarZoomMaximo(E.centro[0], E.centro[1]);
+  ZOOM.pronto=ajustarZoomMaximo(E.centro[0], E.centro[1]);
   const zona=utmZone(E.centro[0]), sul=E.centro[1]<0;
   const kind=(E.centro[1]>-35&&E.centro[1]<7&&E.centro[0]>-75&&E.centro[0]<-32)?'sirgas':'wgs84';
   E.crsSugerido={zone:zona, south:sul, kind};
@@ -7323,8 +7369,16 @@ function comecarVoo(semCena){
   m.stop(); m.setPadding({top:0,bottom:0,left:0,right:0});
   const cam=m.cameraForBounds(E.bbox,{padding:40, bearing:0});
   const alvo={center:[cam.center.lng, cam.center.lat], zoom:Math.min(17, cam.zoom-.7), pitch:38, bearing:-16};
-  voarPara(alvo, {final:'talhao', semCena:!!semCena}, ()=>{ $('#btPular').classList.remove('visivel'); CENA.fx=0; CENA.travessia=0; CENA.neutra=false; pousar(); });
-  if(!reduzMov) $('#btPular').classList.add('visivel');
+  const voo=VOO.seq=(VOO.seq||0)+1;
+  const partir=()=>{
+    if(voo!==VOO.seq || E.etapa==='desenho') return;
+    preCarregarVoo(alvo);
+    voarPara(alvo, {final:'talhao', semCena:!!semCena}, ()=>{ $('#btPular').classList.remove('visivel'); CENA.fx=0; CENA.travessia=0; CENA.neutra=false; pousar();
+      MAPA.map.once('idle', preCarregarVitrine); });
+    if(!reduzMov) $('#btPular').classList.add('visivel');
+  };
+  // espera saber o zoom máximo da região (≈0,3 s; no máximo 1,2 s): assim a fonte do satélite não é trocada no meio do voo
+  if(reduzMov) partir(); else Promise.race([ZOOM.pronto, new Promise(r=>setTimeout(r,1200))]).then(partir, partir);
 }
 $('#btPular').addEventListener('click',()=>{ if(VOO.ativo) VOO.pular=true; });
 function haversine(a,b){ const R=6371000, f1=a[1]*RAD, f2=b[1]*RAD, df=(b[1]-a[1])*RAD, dl=(b[0]-a[0])*RAD;
