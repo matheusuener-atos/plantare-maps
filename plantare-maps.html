@@ -6536,8 +6536,21 @@ function neutralizarCena(){
       'sky-horizon-blend':.6,'horizon-fog-blend':.4,'fog-ground-blend':.95,'atmosphere-blend':0}); }catch(e){ /* sem céu */ }
   }
 }
+/* Luzes das cidades à noite (NASA Black Marble, ~500 m por pixel): fortes no alto do voo, onde as
+   cidades aparecem acesas; perto do chão só um brilho leve (de perto a imagem fica borrada).
+   Na aprovação ("subida ao espaço") quem controla as luzes é a própria animação. */
+function luzesNoturnas(noite){
+  if(typeof MAPA==='undefined' || !MAPA.pronto) return;
+  if(typeof E!=='undefined' && E.etapa==='aprovando'){ luzesNoturnas.a=undefined; return; }
+  const m=MAPA.map; if(!m.getLayer('luzes')) return;
+  const c01=x=>Math.max(0,Math.min(1,x)), z=m.getZoom(), alto=c01((12-z)/5);   // z≤7 → 1; z≥12 → 0
+  let a=z<13 ? noite*(.12+.8*alto*alto*alto) : 0; a=Math.round(a*100)/100;   // no alto, a Terra à noite; embaixo, só um brilho
+  if(a===luzesNoturnas.a) return; luzesNoturnas.a=a;
+  if(a>0){ if(m.getLayoutProperty('luzes','visibility')!=='visible') m.setLayoutProperty('luzes','visibility','visible'); m.setPaintProperty('luzes','raster-opacity',a); }
+  else if(m.getLayoutProperty('luzes','visibility')!=='none') m.setLayoutProperty('luzes','visibility','none');
+}
 function aplicarCena(agora){
-  if((typeof CR!=='undefined' && CR.ativo) || CENA.neutra){ CENA.fx=0; neutralizarCena(); return; }
+  if((typeof CR!=='undefined' && CR.ativo) || CENA.neutra){ CENA.fx=0; neutralizarCena(); luzesNoturnas(0); return; }
   if(CENA.soNuvens){
     if(CEU.ativo){ const cam=MAPA.cameraNuvem();
       CEU.quadro(agora,{off:cam.off, esc:cam.esc, cov:.42, a:.5, chuva:0, gotas:0, flash:0, brilho:0,
@@ -6545,11 +6558,13 @@ function aplicarCena(agora){
     return;
   }
   const s=solDaCena(), tr=tratamento(s), w=TEMPOS[tempoAtual()], fx=CENA.fx;
-  const brilhoMapa=lerp(1, tr.b*w.b, fx), sat=lerp(1, tr.s*w.s, fx);
+  luzesNoturnas(Math.max(0,Math.min(1,(-2-s.alt)/10))*fx);   // noite: sol 2° a 12° abaixo do horizonte
+  const la=luzesNoturnas.a||0;   // com as luzes da NASA por cima (a Terra à noite), o escurecimento artificial sai
+  const brilhoMapa=lerp(1, tr.b*w.b, fx*(1-la)), sat=lerp(1, tr.s*w.s, fx*(1-la));
   const cvMapa=document.querySelector('#mapa .maplibregl-canvas');
   const desf=(w.gotas||0)*fx*(reduzMov?0:1);
   if(cvMapa) cvMapa.style.filter = fx>.01 ? 'brightness('+brilhoMapa.toFixed(3)+') saturate('+sat.toFixed(3)+')'+(desf>.01?' blur('+(1.6*desf).toFixed(2)+'px) hue-rotate('+(-8*desf).toFixed(1)+'deg)':'') : '';
-  $('#tom').style.background=rgb(tr.mul); $('#tom').style.opacity=(tr.mA*fx).toFixed(3);
+  $('#tom').style.background=rgb(tr.mul); $('#tom').style.opacity=(tr.mA*fx*(1-la)).toFixed(3);
   const sd=[-Math.sin(s.az), -Math.cos(s.az)];  // direção horizontal do sol (x leste, y norte)
   const brg=(typeof MAPA!=='undefined' && MAPA.map) ? MAPA.map.getBearing()*RAD : 0;
   const sx=sd[0]*Math.cos(brg)-sd[1]*Math.sin(brg), sy=sd[0]*Math.sin(brg)+sd[1]*Math.cos(brg);
