@@ -35,7 +35,7 @@ function cors(req, env) {
   const permitida = ok.includes('*') || ok.includes(origem);
   return { permitida, headers: permitida ? {
     'access-control-allow-origin': origem || '*', 'vary': 'origin',
-    'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'content-type, authorization', 'access-control-max-age': '86400' } : {} };
+    'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'content-type, authorization, x-plantare-acesso', 'access-control-max-age': '86400' } : {} };
 }
 
 /* ---------------- Supabase ---------------- */
@@ -88,6 +88,7 @@ function validarPolys(polys) {
   }
   return null;
 }
+const sha256 = async t => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)))].map(b => b.toString(16).padStart(2, '0')).join('');
 /* impressão digital do talhão: o mesmo polígono dá sempre o mesmo código */
 async function hashTalhao(polys) {
   const r7 = v => Math.round(v * 1e7) / 1e7, anel = r => r.map(p => [r7(+p[0]), r7(+p[1])]);
@@ -153,6 +154,11 @@ async function criarCobranca(body, env, user) {
   if (o.cupom && o.cupom.gratis) throw new Falha('Cupom de cortesia: use o botão de cortesia (não precisa de Pix).');
   if (!p.total) throw new Falha('Nada a cobrar: escolha ao menos uma camada paga.');
   if (p.total < 1) throw new Falha('Valor abaixo do mínimo do Pix.');
+  if (!bancoPronto(env)) throw new Falha('Serviço sem banco configurado.', 503);
+  // sem conta: o e-mail vem do formulário e a compra fica presa a uma chave que só o navegador de quem pagou guarda
+  const email = user ? user.email : String(body.email || '').trim().toLowerCase();
+  if (!user && (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254)) throw new Falha('Informe um e-mail válido para o comprovante.');
+  const acesso = user ? null : [...crypto.getRandomValues(new Uint8Array(24))].map(b => b.toString(16).padStart(2, '0')).join('');
   const plano = limparPlano(body.plano);
   const area = await hashTalhao(body.polys);
   const valor = p.total.toFixed(2);
@@ -161,7 +167,7 @@ async function criarCobranca(body, env, user) {
     description: 'Plantare Maps · plano ' + plano + ' · ' + p.ha.toFixed(2) + ' ha',
     transactions: { payments: [{ amount: valor, payment_method: { id: 'pix', type: 'bank_transfer' }, expiration_time: env.EXPIRA || 'PT30M' }] },
     // PAGADOR_TESTE="APRO" só com credencial de teste: o Mercado Pago aprova a order de teste sozinho
-    payer: env.PAGADOR_TESTE ? { email: user.email, first_name: env.PAGADOR_TESTE } : { email: user.email }
+    payer: env.PAGADOR_TESTE ? { email, first_name: env.PAGADOR_TESTE } : { email }
   };
   const r = await fetch(MP + '/v1/orders', { method: 'POST', headers: {
       'content-type': 'application/json', 'accept': 'application/json',
@@ -170,7 +176,8 @@ async function criarCobranca(body, env, user) {
   const d = await r.json().catch(() => ({}));
   if (!r.ok) return json({ ok: false, motivo: 'O Mercado Pago recusou a cobrança.', detalhe: d && (d.message || (d.errors && d.errors[0] && [d.errors[0].message].concat(d.errors[0].details || []).join(' · '))) || r.status }, 502);
   await sb(env, 'compras', { method: 'POST', prefer: 'return=minimal', body: {
-    id: String(d.id), user_id: user.id, email: user.email, plano, area_hash: area, ha: p.ha, camadas: p.camadas, valor: p.total, cupom: o.cupom ? o.cupom.codigo : null } });
+    id: String(d.id), user_id: user ? user.id : null, email, acesso_hash: acesso ? await sha256(acesso) : null,
+    plano, area_hash: area, ha: p.ha, camadas: p.camadas, valor: p.total, cupom: o.cupom ? o.cupom.codigo : null } });
   if (o.cupom) {
     try {
       const antiga = await rpc(env, 'plantare_reservar_cupom', { p_codigo: o.cupom.codigo, p_user: user.id, p_compra: String(d.id) });
@@ -181,7 +188,7 @@ async function criarCobranca(body, env, user) {
       throw new Falha('Você já usou este cupom.');
     }
   }
-  return json(Object.assign({ ok: true, id: d.id, status: d.status, valor: p.total, preco: p, cupom: o.cupom }, dadosPix(d)));
+  return json(Object.assign({ ok: true, id: d.id, status: d.status, valor: p.total, preco: p, cupom: o.cupom }, acesso ? { acesso } : {}, dadosPix(d)));
 }
 
 const escH = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -213,11 +220,16 @@ async function cortesia(body, env, user) {
   return json({ ok: true, id, pago: true, plano, camadas: p.camadas, recibo });
 }
 
-async function compraDa(env, id, user) {
+/* a compra é de quem está logado nela OU de quem tem a chave de acesso (compra sem conta) */
+async function compraDa(env, id, user, acesso) {
   if (!/^[\w-]{6,64}$/.test(String(id || ''))) throw new Falha('Cobrança inválida.');
-  const l = await sb(env, 'compras?id=eq.' + q(id) + '&user_id=eq.' + q(user.id) + '&select=*');
-  if (!l || !l.length) throw new Falha('Esta cobrança não é desta conta.', 404);
-  return l[0];
+  if (!user && !acesso) throw new Falha('Entre na sua conta para continuar.', 401);
+  const l = await sb(env, 'compras?id=eq.' + q(id) + '&select=*');
+  const c = l && l[0];
+  const dono = !!(c && user && c.user_id === user.id);
+  const chave = !!(c && acesso && c.acesso_hash && /^[0-9a-f]{48}$/.test(String(acesso)) && (await sha256(String(acesso))) === c.acesso_hash);
+  if (!dono && !chave) throw new Falha(user ? 'Esta cobrança não é desta conta.' : 'Cobrança não encontrada neste aparelho.', 404);
+  return c;
 }
 /* consulta o Mercado Pago e grava no banco se o Pix caiu */
 async function atualizarCompra(env, c) {
@@ -231,8 +243,8 @@ async function atualizarCompra(env, c) {
   }
   return Object.assign({}, c, { order: d });
 }
-async function consultar(id, env, user) {
-  const c = await atualizarCompra(env, await compraDa(env, id, user)), pago = c.status === 'pago';
+async function consultar(id, env, user, acesso) {
+  const c = await atualizarCompra(env, await compraDa(env, id, user, acesso)), pago = c.status === 'pago';
   return json(Object.assign({ ok: true, id: c.id, pago, encerrado: ['expirado', 'cancelado'].includes(c.status), status: c.status,
     plano: c.plano, camadas: c.camadas, ha: +c.ha, valor: +c.valor, area: c.area_hash }, !pago && c.order ? dadosPix(c.order) : {}));
 }
@@ -246,13 +258,13 @@ const b64 = u8 => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s +=
 async function entregar(body, env, user) {
   const e = body && body.entrada;
   if (!e || validarPolys(e.polys)) throw new Falha('Plano inválido.');
-  const c = await atualizarCompra(env, await compraDa(env, body.pedido, user));
+  const c = await atualizarCompra(env, await compraDa(env, body.pedido, user, body.acesso));
   if (c.status !== 'pago') throw new Falha('Pagamento ainda não confirmado.', 402);
   if (await hashTalhao(e.polys) !== c.area_hash) throw new Falha('Este pagamento é de outro talhão.', 403);
   const dias = +(env.REBAIXAR_DIAS || 365);
   if (dias > 0 && c.pago_em && Date.now() - Date.parse(c.pago_em) > dias * 864e5) throw new Falha('Esta compra tem mais de ' + dias + ' dias. Gere um novo Pix para baixar de novo.', 403);
   const quando = new Date().toISOString().slice(0, 10);
-  const texto = 'Licenciado a ' + user.email + ' · pedido ' + c.id + ' · plano #' + c.plano + ' · ' + quando + ' · Plantare Maps';
+  const texto = 'Licenciado a ' + (user ? user.email : c.email) + ' · pedido ' + c.id + ' · plano #' + c.plano + ' · ' + quando + ' · Plantare Maps';
   let r;
   try { r = gerarPacote(e, { camadas: c.camadas, texto }); } catch (err) { throw new Falha(err.message || 'Plano inválido.'); }
   const enc = new TextEncoder();
@@ -310,11 +322,12 @@ export default {
         return json(Object.assign({ ok: true }, await orcar(await req.json(), env, user)), 200, c.headers);
       }
       if (rota === '/eu' && req.method === 'GET') return com(await minhasCompras(env, await exigirUsuario(req, env)));
-      if (rota === '/cobranca' && req.method === 'POST') { const u = await exigirUsuario(req, env); return com(await criarCobranca(await req.json(), env, u)); }
+      // Pix e download: com conta ou sem (sem conta vale a chave de acesso guardada no navegador)
+      if (rota === '/cobranca' && req.method === 'POST') { const u = await usuario(req, env); return com(await criarCobranca(await req.json(), env, u)); }
       if (rota === '/cortesia' && req.method === 'POST') { const u = await exigirUsuario(req, env); return com(await cortesia(await req.json(), env, u)); }
-      if (rota === '/pacote' && req.method === 'POST') { const u = await exigirUsuario(req, env); return com(await entregar(await req.json(), env, u)); }
+      if (rota === '/pacote' && req.method === 'POST') { if (!bancoPronto(env)) throw new Falha('Serviço sem banco configurado.', 503); const u = await usuario(req, env); return com(await entregar(await req.json(), env, u)); }
       const m = rota.match(/^\/status\/([^/]+)$/);
-      if (m && req.method === 'GET') { const u = await exigirUsuario(req, env); return com(await consultar(decodeURIComponent(m[1]), env, u)); }
+      if (m && req.method === 'GET') { if (!bancoPronto(env)) throw new Falha('Serviço sem banco configurado.', 503); const u = await usuario(req, env); return com(await consultar(decodeURIComponent(m[1]), env, u, req.headers.get('x-plantare-acesso'))); }
       return json({ ok: false, motivo: 'Rota não encontrada.' }, 404, c.headers);
     } catch (e) {
       if (e instanceof Falha) return json({ ok: false, motivo: e.message }, e.status, c.headers);

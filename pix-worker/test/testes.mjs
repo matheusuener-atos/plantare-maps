@@ -39,8 +39,8 @@ await t('área geodésica do quadrado ≈ 100 ha', () => { const ha = areaPoligo
 // ---------- acesso ----------
 await t('origem estranha é barrada', async () => { assert.equal((await chama('/preco', { polys, camadas: ['linhas_ab'] }, { orig: 'https://golpe.com' })).st, 403); });
 await t('preflight CORS aceita authorization', async () => { const { r } = await chama('/cobranca', null, { metodo: 'OPTIONS' }); assert.equal(r.status, 204); assert.match(r.headers.get('access-control-allow-headers'), /authorization/); });
-await t('/cobranca sem conta → 401', async () => { assert.equal((await chama('/cobranca', { plano: 'x', polys, camadas: ['linhas_ab'] })).st, 401); });
-await t('/cobranca com token falso → 401', async () => { assert.equal((await chama('/cobranca', { plano: 'x', polys, camadas: ['linhas_ab'] }, { token: 'tok-invalido-0123456789abcdef' })).st, 401); });
+await t('/cobranca sem conta e sem e-mail → 400', async () => { const { st, j } = await chama('/cobranca', { plano: 'x', polys, camadas: ['linhas_ab'] }); assert.equal(st, 400); assert.match(j.motivo, /e-mail/); });
+await t('/cobranca com token falso vira compra sem conta (pede e-mail)', async () => { assert.equal((await chama('/cobranca', { plano: 'x', polys, camadas: ['linhas_ab'] }, { token: 'tok-invalido-0123456789abcdef' })).st, 400); });
 await t('/eu mostra só compras pagas da conta', async () => { const { st, j } = await chama('/eu', null, ANA); assert.equal(st, 200); assert.equal(j.email, 'ana@fazenda.com.br'); assert.deepEqual(j.compras, []); });
 
 // ---------- preço e cupom ----------
@@ -121,6 +121,30 @@ await t('/cortesia: e-mail falhando não impede o download', async () => {
 await t('/cortesia de origem estranha é barrada', async () => { assert.equal((await chamaE('/cortesia', { plano: 'x', polys, camadas: ['linhas_ab'], cupom: 'AMIGO' }, Object.assign({ orig: 'https://golpe.com' }, ANA))).st, 403); });
 
 // ---------- Pix assíncrono, teste, referência ----------
+// ---------- compra sem conta (visitante) ----------
+let visita;
+await t('sem conta: Pix com e-mail do formulário e chave de acesso', async () => {
+  const { st, j } = await chama('/cobranca', { plano: 'V1', polys: plano.polys, camadas: ['linhas_ab', 'bordadura'], email: 'Visita@Fazenda.com' });
+  assert.equal(st, 200, JSON.stringify(j)); visita = j; assert.match(j.acesso, /^[0-9a-f]{48}$/);
+  const c = F.compras.find(x => x.id === j.id); assert.equal(c.user_id, null); assert.equal(c.email, 'visita@fazenda.com'); assert.match(c.acesso_hash, /^[0-9a-f]{64}$/); assert.notEqual(c.acesso_hash, j.acesso);
+  assert.equal(F.orders[j.id].payer.email, 'visita@fazenda.com'); });
+await t('sem conta: cupom exige conta', async () => { const { st, j } = await chama('/cobranca', { plano: 'V2', polys, camadas: TODAS, email: 'a@b.com', cupom: 'CAMPO10' }); assert.equal(st, 400); assert.match(j.motivo, /conta/); });
+const comChave = (k) => ({ orig: ORIG, chave: k });
+const statusCom = async (id, k, o) => { const h = { origin: ORIG }; if (k) h['x-plantare-acesso'] = k; if (o && o.token) h.authorization = 'Bearer ' + o.token;
+  const r = await worker.fetch(new Request('https://pix.matheusuener.com.br/status/' + id, { headers: h }), env); return { st: r.status, j: await r.json() }; };
+await t('sem conta: status só com a chave certa', async () => {
+  assert.equal((await statusCom(visita.id, visita.acesso)).st, 200);
+  assert.equal((await statusCom(visita.id, null)).st, 401);
+  assert.equal((await statusCom(visita.id, 'f'.repeat(48))).st, 404);
+  assert.equal((await statusCom(visita.id, null, ANA)).st, 404); });
+await t('sem conta: depois de pago, baixa com a chave (e só com ela)', async () => {
+  F.pagar(visita.id); assert.equal((await statusCom(visita.id, visita.acesso)).j.pago, true);
+  const entrada = Object.assign({}, plano, { formatos: { ab: 1 } });
+  const ok = await chama('/pacote', { pedido: visita.id, acesso: visita.acesso, entrada }); assert.equal(ok.st, 200, JSON.stringify(ok.j).slice(0, 200));
+  const ab = Buffer.from(ok.j.arquivos.find(a => a.name.endsWith('_ab.kml')).b64, 'base64').toString(); assert.match(ab, /Licenciado a visita@fazenda.com/);
+  assert.equal((await chama('/pacote', { pedido: visita.id, entrada })).st, 401);
+  assert.equal((await chama('/pacote', { pedido: visita.id, acesso: 'a'.repeat(48), entrada })).st, 404); });
+await t('preflight libera o cabeçalho da chave', async () => { const { r } = await chama('/status/x', null, { metodo: 'OPTIONS' }); assert.match(r.headers.get('access-control-allow-headers'), /x-plantare-acesso/); });
 await t('referência só com letras, números e -', async () => { const o = F.orders[pedido1]; assert.match(o.external_reference, /^plantare-4K4D1L-ABP-\d+$/); });
 await t('/cobranca com PAGADOR_TESTE manda first_name APRO', async () => { const r = await worker.fetch(req('/cobranca', { plano: 'T', polys, camadas: ['linhas_ab'] }, BETO), Object.assign({}, env, { PAGADOR_TESTE: 'APRO' }));
   const j = await r.json(); assert.equal(F.orders[j.id].payer.first_name, 'APRO'); assert.equal(F.orders[pedido1].payer.first_name, undefined); });

@@ -1336,7 +1336,7 @@ dialog.gp{width:min(860px,94vw)}
       <div class="cupom-msg" id="pgCupomMsg" role="status"></div>
       <div class="total"><span>Total</span><b id="pgTotal"></b></div>
       <div class="pg-login" id="pgLogin" hidden>
-        <p class="nota">Entre com sua conta para pagar. A compra fica ligada a ela: dá para baixar de novo, até em outro aparelho.</p>
+        <p class="nota" id="pgLoginNota">Entre com sua conta. A compra fica ligada a ela: dá para baixar de novo, até em outro aparelho.</p>
         <button type="button" class="btn btn-luz btn-bloco" id="pgGoogle">Entrar com Google</button>
         <div class="pg-ou"><span>ou pelo e-mail</span></div>
         <div class="cupom"><input id="pgLoginEmail" type="email" autocomplete="email" inputmode="email" placeholder="voce@fazenda.com.br" aria-label="Seu e-mail"><button class="btn btn-fio" type="button" id="pgLoginEnviar">Enviar link</button></div>
@@ -1349,6 +1349,7 @@ dialog.gp{width:min(860px,94vw)}
         <input id="pgEmail" type="email" autocomplete="email" inputmode="email" placeholder="voce@fazenda.com.br" hidden>
         <button type="button" class="btn btn-luz btn-bloco" id="pgGerar">Gerar Pix</button>
         <p class="cupom-msg" id="pgGerarMsg" role="status"></p>
+        <p class="nota pg-opcional" id="pgContaOpcional" hidden>Tem conta? <button class="link" type="button" id="pgEntrarOpc">Entrar</button> para guardar a compra e baixar de novo em qualquer aparelho. É opcional.</p>
       </div>
       <div class="pix" id="pgPix">
         <div class="qr" id="pgQr" role="img" aria-label="QR demonstrativo, sem cobrança"></div>
@@ -6892,10 +6893,17 @@ function camadasCobradas(){
 function areaCobradaHa(){ return areaPoligonos(E.polysLL)/1e4; }
 function precoAtual(cupom){ return calcularPreco(areaCobradaHa(), camadasCobradas(), cupom||0); }
 /* compras pagas da conta (vêm do servidor): o mesmo talhão com as mesmas camadas (ou menos) baixa de novo sem cobrar */
+/* compras feitas sem conta: ficam neste navegador, com a chave de acesso que o servidor devolveu */
+const VISITA_CHAVE='plantare.compras.visita';
+function visitaLer(){ try{ return JSON.parse(localStorage.getItem(VISITA_CHAVE)||'[]'); }catch(e){ return []; } }
+function visitaGuardar(c){ try{ const l=visitaLer().filter(x=>x.id!==c.id); l.unshift(c); localStorage.setItem(VISITA_CHAVE, JSON.stringify(l.slice(0,60))); }catch(e){} }
 function compraQueCobre(camadas){
-  if(!CONTA.compras || AREA_HASH.polys!==E.polysLL || !AREA_HASH.valor) return null;
-  return CONTA.compras.find(c=>c.area_hash===AREA_HASH.valor && camadas.every(k=>(c.camadas||[]).includes(k)))||null;
+  if(AREA_HASH.polys!==E.polysLL || !AREA_HASH.valor) return null;
+  const cobre=c=>c.area_hash===AREA_HASH.valor && camadas.every(k=>(c.camadas||[]).includes(k));
+  return (CONTA.compras||[]).find(cobre) || visitaLer().find(c=>c.pago && cobre(c)) || null;
 }
+/* sem conta: calcula a impressão digital do talhão para achar compras feitas neste navegador */
+async function hashLocalDoTalhao(){ if(!E.polysLL) return; if(AREA_HASH.polys!==E.polysLL){ await hashDoTalhao(E.polysLL); AREA_HASH.polys=E.polysLL; } }
 function pagoCobre(id, camadas){ return !!compraQueCobre(camadas); }
 let contaSinc=null, contaSincPara=null;
 async function contaSincronizar(forcar){
@@ -6912,6 +6920,7 @@ async function contaSincronizar(forcar){
 }
 /* a tela de arquivos pergunta ao servidor uma vez por talhão e conta */
 function contaSincronizarTela(){
+  if(!contaLogada() && E.polysLL && AREA_HASH.polys!==E.polysLL && visitaLer().length){ hashLocalDoTalhao().then(()=>{ if(E.passo==='arquivos' && typeof atualizarPainel==='function') atualizarPainel(); }); return; }
   const chave=E.polysLL && contaLogada() ? CONTA.sessao.email : null;
   if(!chave || !pixApi() || (contaSincPara && contaSincPara.polys===E.polysLL && contaSincPara.email===chave && CONTA.compras)) return;
   contaSincPara={polys:E.polysLL, email:chave};
@@ -6928,7 +6937,7 @@ function htmlPreco(){
   h+='<div class="pb-lin"><span>'+(p.minimoAplicado?'Mínimo por compra':'Soma das camadas')+'</span><b>'+brl(p.porHa)+'<small>/ha</small></b></div>';
   if(p.partes.length>1){ h+='<div class="pb-faixas">'+p.partes.map(x=>'<span>'+fmt(x.de,0)+'–'+fmt(x.ate,x.ate%1?1:0)+' ha'+(x.desconto?' · −'+Math.round(x.desconto*100)+'%':'')+'</span><b>'+brl(x.valor)+'</b>').join('')+'</div>'; }
   h+='<div class="pb-total"><span>'+fmt(p.ha,2)+' ha'+(p.partes.length>1?' · economia de '+brl(p.semDesconto-p.subtotal):'')+'</span><b>'+brl(p.total)+'</b></div>';
-  h+=jaPago?'<p>Este talhão já foi pago na sua conta ('+esc(contaEmail())+'): o download sai sem nova cobrança.</p>':'<p>Relatório, imagem e projeto são grátis. Cada camada paga leva todos os formatos, gerados no servidor e ligados à sua conta.</p>';
+  h+=jaPago?(contaLogada()?'<p>Este talhão já foi pago na sua conta ('+esc(contaEmail())+'): o download sai sem nova cobrança.</p>':'<p>Este talhão já foi pago neste aparelho: o download sai sem nova cobrança.</p>'):'<p>Relatório, imagem e projeto são grátis. Cada camada paga leva todos os formatos, gerados no servidor e ligados à sua conta.</p>';
   return h+'</div>';
 }
 </script>
@@ -9522,9 +9531,9 @@ function pgMostrarTotal(){
 function abrirPagamento(){
   const n=contarArquivos(); if(!n || !E.aprovado || E.passo!=='arquivos') return;
   const id=idPlano(); pgPararEspera();
-  PG.id=id; PG.cupom=''; PG.pedido=null; PG.jaPago=false; PG.cortesia=false; PG.preco=precoAtual(); PG.camadas=PG.preco.camadas.slice();
+  PG.id=id; PG.cupom=''; PG.pedido=null; PG.acesso=null; PG.jaPago=false; PG.cortesia=false; PG.mostrarLogin=false; PG.preco=precoAtual(); PG.camadas=PG.preco.camadas.slice();
   const ja=PG.preco.total && pixApi() ? compraQueCobre(PG.camadas) : null;
-  if(ja){ PG.pedido=ja.id; PG.jaPago=true; }
+  if(ja){ PG.pedido=ja.id; PG.acesso=ja.acesso||null; PG.jaPago=true; }
   PG.modo = (!PG.preco.total || ja) ? 'gratis' : pixApi() ? 'pix' : 'demo';
   $('#pgId').textContent='#'+id;
   $('#pgResumo').textContent=(E.arquivo||'Talhão')+' · '+fmt(PG.preco.ha||areaCobradaHa(),1)+' ha · '+n+(n===1?' arquivo':' arquivos');
@@ -9534,11 +9543,14 @@ function abrirPagamento(){
   $('#pgPago').hidden=true; $('#pgFechar').disabled=false; $('#pgConcluir').hidden=true; $('#pgConcluir').disabled=false; $('#pgStatus').textContent='';
   $('#pgGerar').disabled=false; $('#pgGerarMsg').textContent=''; $('#pgGerar').textContent='Gerar Pix';
   $('#pgCodigoBox').hidden=true; $('#pgLoginMsg').textContent=''; $('#pgLoginEmail').value=contaEmail()||(()=>{ try{ return localStorage.getItem('plantare_email')||''; }catch(e){ return ''; } })();
+  $('#pgEmail').value=(()=>{ try{ return localStorage.getItem('plantare_email')||''; }catch(e){ return ''; } })();
   pgConfigurar();
   entregaConfirmada=false;
   $('#pagamento').showModal();
   // conta logada: confere no servidor se este talhão já foi pago
   if(PG.modo==='pix' && contaLogada()) contaSincronizar(true).then(pgConferirJaPago);
+  // sem conta: confere se este talhão já foi pago neste navegador
+  if(PG.modo==='pix' && !contaLogada() && visitaLer().length) hashLocalDoTalhao().then(pgConferirJaPago);
 }
 /* monta a etapa 02 conforme o modo */
 function pgConfigurar(){
@@ -9550,23 +9562,28 @@ function pgConfigurar(){
   $('#pgSimular').hidden=false; $('#pgSimular').disabled=!$('#pgAceite').checked || PG.modo==='pix';
   $('#pgSimular').textContent=PG.modo==='gratis'?'Baixar os arquivos':'Confirmar simulação e baixar';
   $('#pgPixNota').textContent=PG.modo==='gratis'
-    ?(PG.jaPago?'Este talhão já foi pago na sua conta: os arquivos saem de novo sem cobrança.':'Nada a pagar: só arquivos grátis.')
+    ?(PG.jaPago?(PG.acesso?'Este talhão já foi pago neste aparelho: os arquivos saem de novo sem cobrança.':'Este talhão já foi pago na sua conta: os arquivos saem de novo sem cobrança.'):'Nada a pagar: só arquivos grátis.')
     :'Demonstração: saem só os arquivos grátis (relatório, imagem e projeto). Os mapas para o monitor são gerados no servidor depois do Pix.';
   if(PG.modo==='demo'){ const codigo='PLANTARE-PREVIA-SEM-COBRANCA-'+PG.id; $('#pgCopia').value=codigo; $('#pgQr').innerHTML=qrSvg(codigo); $('#pgQr').setAttribute('aria-label','QR demonstrativo, sem cobrança'); }
   pgContaTela();
 }
 /* login / conta dentro da etapa 02 */
+/* Conta é opcional: sem ela, o Pix pede só o e-mail do comprovante. Só o cupom (um uso por conta) exige entrar. */
 function pgContaTela(){
-  const logado=contaLogada(), precisa=(PG.modo==='pix' || PG.cortesia) && !(PG.pedido && !PG.cortesia);
-  $('#pgLogin').hidden=!(precisa && !logado);
+  const logado=contaLogada(), ativo=(PG.modo==='pix' || PG.cortesia) && !(PG.pedido && !PG.cortesia), exige=!!PG.cortesia;
+  const visita=ativo && !logado && !exige;
+  $('#pgLogin').hidden=!(ativo && !logado && (exige || PG.mostrarLogin));
+  $('#pgLoginNota').textContent=exige?'O cupom vale uma vez por conta: entre para usar.':'Entre para guardar a compra na sua conta e baixar de novo em qualquer aparelho.';
   $('#pgQuem').hidden=!(logado && pixApi()); $('#pgQuemEmail').textContent=contaEmail();
-  $('#pgEmailBox').hidden=!(precisa && logado);
+  $('#pgEmailBox').hidden=!(ativo && (logado || !exige));
+  $('label[for="pgEmail"]').hidden=!visita; $('#pgEmail').hidden=!visita;
+  $('#pgContaOpcional').hidden=!visita || !!PG.mostrarLogin;
   if(CONTA.erro){ $('#pgLoginMsg').textContent='Não foi possível entrar: '+CONTA.erro; CONTA.erro=''; }
 }
 function pgConferirJaPago(){
   if(!$('#pagamento').open || PG.pedido || entregaConfirmada) return;
   const c=compraQueCobre(PG.camadas); if(!c) return;
-  PG.pedido=c.id; PG.jaPago=true; PG.modo='gratis'; PG.cupom=''; pgConfigurar();
+  PG.pedido=c.id; PG.acesso=c.acesso||null; PG.jaPago=true; PG.modo='gratis'; PG.cupom=''; pgConfigurar();
 }
 CONTA.ouvintes.push(()=>{
   if($('#pagamento').open){ pgContaTela(); if(contaLogada() && /^Entre na sua conta/.test($('#pgCupomMsg').textContent)) $('#pgCupomMsg').textContent='';
@@ -9574,6 +9591,7 @@ CONTA.ouvintes.push(()=>{
   if(E.passo==='arquivos' && typeof atualizarPainel==='function') atualizarPainel();
 });
 $('#pgGoogle').addEventListener('click', entrarGoogle);
+$('#pgEntrarOpc').addEventListener('click', ()=>{ PG.mostrarLogin=true; pgContaTela(); $('#pgGoogle').focus(); });
 $('#pgLoginEnviar').addEventListener('click', async()=>{
   const email=$('#pgLoginEmail').value.trim();
   if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ $('#pgLoginMsg').textContent='Informe um e-mail válido.'; $('#pgLoginEmail').focus(); return; }
@@ -9594,6 +9612,7 @@ $('#pgCodigo').addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDef
 $('#pgSair').addEventListener('click', ()=>{ sairConta(); if(PG.jaPago && !entregaConfirmada){ PG.pedido=null; PG.jaPago=false; PG.modo=pixApi()?'pix':'demo'; pgConfigurar(); } });
 async function pgChamar(rota, corpo){
   const h={}, t=await contaToken(); if(t) h.authorization='Bearer '+t;
+  if(PG.acesso && /^\/status\//.test(rota)) h['x-plantare-acesso']=PG.acesso;   // compra sem conta
   if(corpo) h['content-type']='application/json';
   const r=await fetch(pixApi()+rota, corpo?{method:'POST', headers:h, body:JSON.stringify(corpo)}:{headers:h});
   let j=null; try{ j=await r.json(); }catch(e){}
@@ -9601,18 +9620,20 @@ async function pgChamar(rota, corpo){
   return j;
 }
 async function pgGerarPix(){
-  if(!contaLogada()){ pgContaTela(); $('#pgGoogle').focus(); return; }
-  const email=contaEmail();
-  if(PG.cortesia) return pgConfirmarCortesia(email);
-  // compra paga pede o cadastro (vai na nota fiscal); a cortesia não
-  $('#pgGerar').disabled=true; $('#pgGerarMsg').textContent='Conferindo seu cadastro…';
-  let perfil=null; try{ perfil=await contaPerfil(); }catch(e){ /* sem resposta: pede o cadastro */ }
-  if(!perfil){ $('#pgGerar').disabled=false; $('#pgGerarMsg').textContent='Complete seu cadastro para gerar o Pix: os dados vão na nota fiscal.'; contaAbrir('cadastro',{modal:true}); return; }
-  contaSalvarTalhaoAgora().catch(()=>{});   // o talhão pago aparece em "Meus talhões" e no extrato
+  if(PG.cortesia){ if(!contaLogada()){ pgContaTela(); $('#pgGoogle').focus(); return; } return pgConfirmarCortesia(contaEmail()); }
+  // conta é opcional: sem ela, vale o e-mail do comprovante
+  let email;
+  if(contaLogada()){ email=contaEmail(); contaSalvarTalhaoAgora().catch(()=>{}); }   // com conta: o talhão vai para "Meus talhões"
+  else{
+    email=$('#pgEmail').value.trim();
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ $('#pgGerarMsg').textContent='Informe um e-mail válido para o comprovante.'; $('#pgEmail').focus(); return; }
+    try{ localStorage.setItem('plantare_email', email); }catch(e){}
+  }
   $('#pgGerar').disabled=true; $('#pgGerarMsg').textContent='Gerando o Pix…';
   try{
-    const r=await pgChamar('/cobranca', {plano:PG.id, polys:E.polysLL, camadas:PG.camadas, cupom:PG.cupom||undefined});
-    PG.pedido=r.id; PG.preco=r.preco; pgMostrarTotal();
+    const r=await pgChamar('/cobranca', {plano:PG.id, polys:E.polysLL, camadas:PG.camadas, cupom:PG.cupom||undefined, email:contaLogada()?undefined:email});
+    PG.pedido=r.id; PG.acesso=r.acesso||null; PG.preco=r.preco; pgMostrarTotal();
+    if(r.acesso){ await hashLocalDoTalhao(); visitaGuardar({id:r.id, acesso:r.acesso, area_hash:AREA_HASH.valor, camadas:PG.camadas.slice(), email, pago:false, quando:new Date().toISOString()}); }
     $('#pgEmailBox').hidden=true; $('#pgPix').hidden=false; $('#pgQr').hidden=false; document.querySelector('#pgPix .copia').hidden=false;
     PG.valor=r.valor; PG.qrPronto=false; pgMostrarQr(r);
     $('#pgSimular').hidden=true; $('#pgEspera').hidden=false;
@@ -9643,7 +9664,9 @@ function pgEsperar(ate){
     if(!$('#pagamento').open || !PG.pedido) return;
     try{
       const s=await pgChamar('/status/'+encodeURIComponent(PG.pedido));
-      if(s.pago){ if(CONTA.compras) CONTA.compras.unshift({id:s.id, area_hash:s.area, camadas:s.camadas||PG.camadas, plano:s.plano}); $('#pgEspera').hidden=true; PG.modo='pago'; pagamentoConfirmado(); return; }
+      if(s.pago){ if(CONTA.compras) CONTA.compras.unshift({id:s.id, area_hash:s.area, camadas:s.camadas||PG.camadas, plano:s.plano});
+        if(PG.acesso){ const v=visitaLer().find(x=>x.id===s.id); if(v) visitaGuardar(Object.assign(v,{pago:true, camadas:s.camadas||v.camadas, area_hash:s.area||v.area_hash})); }
+        $('#pgEspera').hidden=true; PG.modo='pago'; pagamentoConfirmado(); return; }
       if(s.encerrado){ $('#pgEspera').hidden=true; $('#pgPixNota').textContent='Este Pix não foi concluído ('+s.status+'). Feche e gere outro para baixar.'; return; }
       if(!PG.qrPronto && (s.qr_code||s.qr_code_base64)){ pgMostrarQr(s); if(s.expira) ate=Date.parse(s.expira); }
     }catch(e){ /* rede instável: tenta de novo */ }
@@ -9689,7 +9712,7 @@ $('#pgAplicar').addEventListener('click',async()=>{
   const c=$('#pgCupom').value.trim();
   if(!c){ $('#pgCupomMsg').textContent='Digite o código do cupom.'; return; }
   if(PG.modo!=='pix'){ $('#pgCupomMsg').textContent='Cupons valem só no pagamento real.'; return; }
-  if(!contaLogada()){ $('#pgCupomMsg').textContent='Entre na sua conta para usar o cupom (ele vale uma vez por conta).'; pgContaTela(); return; }
+  if(!contaLogada()){ $('#pgCupomMsg').textContent='Entre na sua conta para usar o cupom (ele vale uma vez por conta).'; PG.mostrarLogin=true; pgContaTela(); return; }
   $('#pgCupomMsg').textContent='Conferindo…';
   try{ const r=await pgChamar('/preco',{polys:E.polysLL, camadas:PG.camadas, cupom:c});
     PG.cupomInfo=r.cupom&&r.cupom.valido?r.cupom:null;
@@ -11816,7 +11839,7 @@ async function montarSelecionados(){
     if(!PG.pedido){
       if(PG.modo!=='demo') throw new Error('Os mapas para o monitor saem depois do pagamento.');
     }else{
-      const r=await pgChamar('/pacote', {pedido:PG.pedido, entrada:entradaServidor(n, perfil)});
+      const r=await pgChamar('/pacote', {pedido:PG.pedido, acesso:PG.acesso||undefined, entrada:entradaServidor(n, perfil)});
       for(const a of r.arquivos) files.push({name:a.name, data:deB64(a.b64)});
       if(r.negados && r.negados.length) aviso('Alguns formatos não entraram: a compra não cobre as camadas deles ('+r.negados.join(', ')+').');
     }
