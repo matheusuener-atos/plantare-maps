@@ -1,7 +1,7 @@
 /* Mercado Pago e Supabase de mentira, para testar o Worker sem rede.
    instalarFalsos() troca o fetch global; devolve o estado para os testes mexerem. */
 export function instalarFalsos(base) {
-  const E = { orders: {}, n: 0, compras: [], cupons: [], usos: [], tokens: {}, chamadas: [] };
+  const E = { orders: {}, n: 0, compras: [], cupons: [], usos: [], tokens: {}, chamadas: [], perfis: [], talhoes: [], arquivos: {}, excluidos: [] };
   const SB = 'https://banco.teste';
   const resp = (obj, st) => new Response(obj === null ? null : JSON.stringify(obj), { status: st || 200, headers: { 'content-type': 'application/json' } });
   const filtros = qs => { const f = []; for (const [k, v] of new URLSearchParams(qs)) if (!['select', 'order', 'limit'].includes(k) && v.startsWith('eq.')) f.push([k, v.slice(3)]); return f; };
@@ -42,6 +42,16 @@ export function instalarFalsos(base) {
     let m = url.match(/^https:\/\/api\.mercadopago\.com\/v1\/orders\/([^/]+)(\/cancel)?$/);
     if (m) { const o = E.orders[decodeURIComponent(m[1])]; if (!o) return resp({ message: 'not found' }, 404);
       if (m[2]) { o.status = 'canceled'; return resp(o); } return resp(o); }
+    // ---- Supabase Storage e admin (exclusão de conta) ----
+    if (url === SB + '/storage/v1/object/list/projetos' && metodo === 'POST') {
+      if (op.headers.apikey !== 'sb_secret_falsa') return resp({ message: 'sem permissão' }, 401);
+      return resp(Object.keys(E.arquivos).filter(n => n.startsWith(corpo.prefix)).map(n => ({ name: n.slice(corpo.prefix.length) }))); }
+    if (url === SB + '/storage/v1/object/projetos' && metodo === 'DELETE') { for (const n of corpo.prefixes) delete E.arquivos[n]; return resp([]); }
+    m = url.match(/^https:\/\/banco\.teste\/auth\/v1\/admin\/users\/([^/?]+)$/);
+    if (m && metodo === 'DELETE') {
+      if (op.headers.apikey !== 'sb_secret_falsa') return resp({ message: 'sem permissão' }, 401);
+      const id = decodeURIComponent(m[1]); for (const t of Object.keys(E.tokens)) if (E.tokens[t].id === id) delete E.tokens[t];
+      E.usos = E.usos.filter(u => u.user_id !== id); E.excluidos.push(id); return resp({}); }
     // ---- Supabase Auth ----
     if (url === SB + '/auth/v1/user') { const t = (op.headers.authorization || '').replace(/^Bearer /, ''); return E.tokens[t] ? resp(E.tokens[t]) : resp({ msg: 'invalid JWT' }, 401); }
     // ---- Supabase REST ----
@@ -49,7 +59,8 @@ export function instalarFalsos(base) {
     if (m) {
       if (op.headers.apikey !== 'sb_secret_falsa') return resp({ message: 'sem permissão' }, 401);
       if (m[1] === 'rpc') { try { return resp(rpc[m[2]](corpo)); } catch (e) { return resp({ message: e.message }, e.st || 400); } }
-      const tab = { compras: E.compras, cupons: E.cupons, cupom_usos: E.usos }[m[1]], f = filtros(m[3] || '');
+      const tab = { compras: E.compras, cupons: E.cupons, cupom_usos: E.usos, perfis: E.perfis, talhoes: E.talhoes }[m[1]], f = filtros(m[3] || '');
+      if (metodo === 'DELETE') { for (let i = tab.length - 1; i >= 0; i--) if (casa(tab[i], f)) tab.splice(i, 1); return resp(null, 204); }
       if (metodo === 'GET') return resp(tab.filter(r => casa(r, f)).sort((a, b) => String(b.pago_em).localeCompare(String(a.pago_em))));
       if (metodo === 'POST') { if (tab.some(r => r.id === corpo.id)) return resp({ message: 'duplicate' }, 409); tab.push(Object.assign({ status: 'pendente', downloads: 0, pago_em: null, criado_em: new Date().toISOString() }, corpo)); return resp(null, 201); }
       if (metodo === 'PATCH') { tab.filter(r => casa(r, f)).forEach(r => Object.assign(r, corpo)); return resp(null, 204); }

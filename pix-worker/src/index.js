@@ -253,6 +253,35 @@ async function minhasCompras(env, user) {
   return json({ ok: true, email: user.email, compras: l || [] });
 }
 
+/* ---------------- excluir a conta ----------------
+   Apaga login, cadastro, talhões e projetos (Storage). As compras pagas ficam (obrigação fiscal),
+   mas desligadas da conta: user_id vazio e uma chave de acesso que ninguém tem. */
+async function excluirConta(body, env, user) {
+  if (String((body && body.confirmar) || '').trim().toUpperCase() !== 'EXCLUIR') throw new Falha('Digite EXCLUIR para confirmar.');
+  const k = env.SUPABASE_SERVICE_KEY, h = { apikey: k, 'content-type': 'application/json' };
+  if (/^eyJ/.test(k)) h.authorization = 'Bearer ' + k;
+  // 1) projetos guardados: projetos/<conta>/…
+  for (let volta = 0; volta < 20; volta++) {
+    const r = await fetch(env.SUPABASE_URL + '/storage/v1/object/list/projetos', { method: 'POST', headers: h, body: JSON.stringify({ prefix: user.id + '/', limit: 1000, offset: 0 }) });
+    const l = r.ok ? await r.json().catch(() => []) : [];
+    const nomes = (Array.isArray(l) ? l : []).filter(o => o && o.name).map(o => user.id + '/' + o.name);
+    if (!nomes.length) break;
+    const d = await fetch(env.SUPABASE_URL + '/storage/v1/object/projetos', { method: 'DELETE', headers: h, body: JSON.stringify({ prefixes: nomes }) });
+    if (!d.ok) throw new Falha('Não foi possível apagar os projetos agora. Tente de novo.', 502);
+    if (nomes.length < 1000) break;
+  }
+  // 2) talhões e cadastro
+  await sb(env, 'talhoes?user_id=eq.' + q(user.id), { method: 'DELETE', prefer: 'return=minimal' });
+  await sb(env, 'perfis?user_id=eq.' + q(user.id), { method: 'DELETE', prefer: 'return=minimal' });
+  // 3) compras: ficam (obrigação fiscal), sem ligação com a conta
+  const tranca = await sha256(crypto.randomUUID() + crypto.randomUUID());
+  await sb(env, 'compras?user_id=eq.' + q(user.id), { method: 'PATCH', prefer: 'return=minimal', body: { user_id: null, acesso_hash: tranca } });
+  // 4) o login (e, em cascata, os usos de cupom)
+  const r = await fetch(env.SUPABASE_URL + '/auth/v1/admin/users/' + q(user.id), { method: 'DELETE', headers: h });
+  if (!r.ok && r.status !== 404) throw new Falha('Não foi possível excluir a conta agora. Tente de novo.', 502);
+  return json({ ok: true });
+}
+
 /* ---------------- entrega ---------------- */
 const b64 = u8 => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); };
 async function entregar(body, env, user) {
@@ -322,6 +351,7 @@ export default {
         return json(Object.assign({ ok: true }, await orcar(await req.json(), env, user)), 200, c.headers);
       }
       if (rota === '/eu' && req.method === 'GET') return com(await minhasCompras(env, await exigirUsuario(req, env)));
+      if (rota === '/conta/excluir' && req.method === 'POST') { const u = await exigirUsuario(req, env); return com(await excluirConta(await req.json().catch(() => ({})), env, u)); }
       // Pix e download: com conta ou sem (sem conta vale a chave de acesso guardada no navegador)
       if (rota === '/cobranca' && req.method === 'POST') { const u = await usuario(req, env); return com(await criarCobranca(await req.json(), env, u)); }
       if (rota === '/cortesia' && req.method === 'POST') { const u = await exigirUsuario(req, env); return com(await cortesia(await req.json(), env, u)); }

@@ -185,6 +185,25 @@ await t('gerador: pacote completo tem os 38 arquivos do app', () => {
 await t('gerador: entrada inválida', () => { assert.throws(() => gerarPacote(Object.assign({}, entradaBoa, { legs: [{ t: 'w', p: [[1, 'a']] }] }), { camadas: TODAS }), /inválido/); });
 await t('/eu lista as compras pagas', async () => { const { j } = await chama('/eu', null, ANA); const esperadas = F.compras.filter(c => c.user_id === 'u-ana' && c.status === 'pago').map(c => c.id); assert.ok(esperadas.includes(cort)); assert.deepEqual(j.compras.map(c => c.id).sort(), esperadas.sort()); });
 
+// ---------- excluir a conta ----------
+await t('excluir conta: pede a palavra EXCLUIR', async () => {
+  F.entrar('tok-dani-0123456789abcdef', 'u-dani', 'dani@x.com');
+  assert.equal((await chama('/conta/excluir', {}, { token: 'tok-dani-0123456789abcdef' })).st, 400);
+  assert.equal((await chama('/conta/excluir', { confirmar: 'EXCLUIR' })).st, 401); });
+await t('excluir conta: apaga login, cadastro, talhões e projetos; guarda a compra sem dono', async () => {
+  const D = { token: 'tok-dani-0123456789abcdef' };
+  F.perfis.push({ user_id: 'u-dani', nome: 'Dani' }, { user_id: 'u-ana', nome: 'Ana' });
+  F.talhoes.push({ user_id: 'u-dani', chave: 'aaa' }, { user_id: 'u-ana', chave: 'bbb' });
+  F.arquivos['u-dani/aaa.json.gz'] = 1; F.arquivos['u-ana/bbb.json.gz'] = 1;
+  const id = (await chama('/cobranca', { plano: 'D1', polys, camadas: ['linhas_ab'] }, D)).j.id; F.pagar(id); await chama('/status/' + id, null, D);
+  const { st, j } = await chama('/conta/excluir', { confirmar: 'excluir' }, D); assert.equal(st, 200, JSON.stringify(j));
+  assert.deepEqual(F.excluidos, ['u-dani']); assert.equal((await chama('/eu', null, D)).st, 401);
+  assert.equal(F.perfis.filter(p => p.user_id === 'u-dani').length, 0); assert.equal(F.talhoes.filter(p => p.user_id === 'u-dani').length, 0);
+  assert.equal(F.arquivos['u-dani/aaa.json.gz'], undefined);
+  const c = F.compras.find(x => x.id === id); assert.equal(c.user_id, null); assert.match(c.acesso_hash, /^[0-9a-f]{64}$/); assert.equal(c.status, 'pago');
+  // a outra conta não é tocada
+  assert.equal(F.perfis.filter(p => p.user_id === 'u-ana').length, 1); assert.equal(F.talhoes.filter(p => p.user_id === 'u-ana').length, 1); assert.equal(F.arquivos['u-ana/bbb.json.gz'], 1);
+  assert.equal((await chama('/eu', null, ANA)).st, 200); });
 // ---------- webhook ----------
 const assinar = async (id, rid, ts) => { const man = 'id:' + id.toLowerCase() + ';request-id:' + rid + ';ts:' + ts + ';';
   const k = await crypto.subtle.importKey('raw', new TextEncoder().encode('segredo'), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
