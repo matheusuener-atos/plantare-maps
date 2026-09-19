@@ -911,6 +911,9 @@ body.criando .marca{z-index:32}.hero .acoes.duas{display:flex;gap:10px;flex-wrap
 .cr-tool{position:relative;width:56px;height:54px;border:1px solid var(--cr-line);border-radius:4px;background:var(--cr-glass);color:#dcebd6;backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);display:flex;align-items:center;justify-content:center;cursor:pointer;transition:.2s ease}
 .cr-tool svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.55;stroke-linecap:round;stroke-linejoin:round}.cr-tool span{position:absolute;left:66px;white-space:nowrap;padding:6px 8px;border:1px solid var(--cr-line);border-radius:3px;background:rgba(6,19,12,.9);font-size:10px;letter-spacing:.06em;text-transform:uppercase;opacity:0;transform:translateX(-6px);pointer-events:none;transition:.18s}
 .cr-tool:hover span,.cr-tool:focus-visible span{opacity:1;transform:none}.cr-tool[aria-pressed="true"]{color:#bdfaa5;border-color:#bdfaa573;background:rgba(154,255,122,.16);box-shadow:inset 3px 0 0 #9dff7a}
+.cr-tool.cr-concluir{color:#07130b;background:rgba(189,250,165,.92);border-color:#d8ffc8;box-shadow:0 0 22px rgba(157,255,122,.35)}
+.cr-tool.cr-concluir svg{stroke-width:2.2}
+.cr-tool.cr-concluir span{opacity:1;transform:none;color:#eaffdf}
 .cr-tool:disabled{opacity:.34;cursor:not-allowed}.cr-tool.cr-sep{margin-top:13px}.cr-tool.cr-sep:before{content:"";position:absolute;left:10px;right:10px;top:-8px;height:1px;background:var(--cr-line)}
 .cr-layers{position:fixed;z-index:31;right:28px;top:26px;display:flex;border:1px solid var(--cr-line);border-radius:4px;background:var(--cr-glass);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);overflow:hidden}
 .cr-layers button{height:38px;padding:0 13px;border:0;border-right:1px solid var(--cr-line);background:transparent;color:#cbdac5;font:600 10px var(--f-texto);letter-spacing:.06em;text-transform:uppercase;cursor:pointer}.cr-layers button:last-child{border:0}.cr-layers button[aria-pressed="true"]{background:rgba(191,255,166,.13);color:#caffb6}.cr-layers button:disabled{opacity:.42;cursor:not-allowed}.cr-layers em{font-style:normal;font-size:8px;opacity:.7;margin-left:4px}
@@ -12103,7 +12106,7 @@ function crRender(markers=true){
   const o=CR.selected?.group==='obstacle'?CR.obstacles[CR.selected.index]:null;if(o?.type==='drain'){const n=o.nodes[Math.max(0,Math.min(o.nodes.length-1,CR.selectedNode))],hs=[];if(CR.selectedNode>0)hs.push(n.hin);if(CR.selectedNode<o.nodes.length-1)hs.push(n.hout);crFonte('cr-handles',crFC(hs.map(p=>({type:'Feature',properties:{},geometry:{type:'LineString',coordinates:[n.p,p]}}))));}else crFonte('cr-handles');
   if(markers)crDesenharMarcadores();crUpdateUI();
 }
-function crPertoPrimeiro(ll,pts){if(!pts.length)return false;const a=MAPA.map.project(ll),b=MAPA.map.project(pts[0]);return Math.hypot(a.x-b.x,a.y-b.y)<18;}
+function crPertoPrimeiro(ll,pts){if(!pts.length)return false;const a=MAPA.map.project(ll),b=MAPA.map.project(pts[0]);return Math.hypot(a.x-b.x,a.y-b.y)<(matchMedia('(pointer:coarse)').matches?32:18);}   // dedo precisa de mais folga
 function crSelecionarNoMapa(e,manter=false){
   const fs=MAPA.map.queryRenderedFeatures(e.point,{layers:['cr-line-hit','cr-area-fill']});
   const f=fs.find(x=>x.properties.kind==='obstacle')||fs.find(x=>x.layer.id==='cr-line-hit')||fs[0];
@@ -12459,8 +12462,25 @@ function crPontosIma(){
   todos: for(const an of crAneisIma()) for(const q of an.pts){ if(q[0]<w||q[0]>e||q[1]<s||q[1]>n) continue; fs.push({type:'Feature',properties:{t:an.tipo},geometry:{type:'Point',coordinates:q}}); if(fs.length>4000) break todos; }
   crFonte('cr-ima-pts', fs.length>4000 ? VAZIO : crFC(fs));
 }
+/* há um desenho em andamento que já pode ser fechado? (o botão da ferramenta vira "Concluir") */
+function crPodeConcluir(){
+  if(CR.tool==='limite'||CR.tool==='poligono') return CR.draft.length>=3;
+  if(CR.tool==='dividir') return !!(CR.div && !CR.div.G && CR.div.pts.length>=2);
+  return false;
+}
 function crSetTool(tool){
   if(!CR.ativo)return;
+  // tocar na ferramenta ativa com um desenho em andamento conclui (antes apagava os pontos)
+  if(tool===CR.tool && tool!=='selecionar'){
+    if(crPodeConcluir()){ if(tool==='dividir') crDivConcluir(); else crFecharRascunho(); }
+    else if(CR.draft.length || (CR.div && CR.div.pts.length)) aviso(tool==='dividir'?'Marque pelo menos dois pontos da linha.':'Marque pelo menos três pontos para fechar.');
+    return;
+  }
+  // trocar de ferramenta no meio de um limite/polígono: fecha se já dá; senão descarta (o Desfazer recupera)
+  if((CR.tool==='limite'||CR.tool==='poligono') && CR.draft.length){
+    if(CR.draft.length>=3){ crFecharRascunho(); if(tool==='selecionar') return; }
+    else { crCommit(); aviso('Desenho com menos de três pontos descartado. Use Desfazer para voltar.'); }
+  }
   if(['circulo','dreno','poligono','dividir'].includes(tool)&&!CR.boundary.length){aviso('Defina o limite antes dos obstáculos.');return;}
   CR.tool=tool;CR.draft=[];CR.draftMeta=[];CR.hover=null;CR.hoverMeta=null;CR.freehand=null;CR.div=null;crFecharPop();crFonte('cr-face');crFonte('cr-snap');
   if(tool!=='selecionar')CR.selected=null;
@@ -12504,6 +12524,7 @@ function crStatus(){
   if(o?.type==='circle')return ['Círculo selecionado','Arraste o centro para mover ou os cantos para redimensionar.'];
   if(o?.type==='drain')return ['Dreno selecionado','Arraste os nós para espichar a linha ou as alças azuis para mudar a curva.'];
   if(o?.type==='polygon')return ['Obstáculo selecionado','Arraste os nós para corrigir o contorno.'];
+  if(crPodeConcluir() && CR.tool!=='dividir')return [CR.tool==='limite'?'Feche o limite.':'Feche o obstáculo.','Toque em ✓ Concluir na barra (ou no primeiro ponto) para fechar. Pode continuar marcando cantos antes.'];
   if(!CR.boundary.length)return ['Comece pelo limite do talhão.','Clique nos cantos da área. Toque no primeiro ponto para fechar.'+(CR.ima?' O ímã puxa para os vértices do CAR.':'')];
   if(CR.tool==='circulo')return ['Posicione o obstáculo circular.',CR.draft.length?'Agora clique na borda para definir o tamanho.':'Clique no centro do poste, cocho ou árvore.'];
   if(CR.tool==='dreno')return ['Desenhe o dreno à mão livre.','Pressione, arraste pelo eixo do dreno e solte. A linha será suavizada.'];
@@ -12520,6 +12541,11 @@ function crUpdateUI(){
   if(!has){$('#crOverline').textContent='01 · DEFINA O TALHÃO';$('#crTitle').textContent='Desenhe o limite.';$('#crHelp').textContent='Marque os cantos no mapa. Toque no primeiro ponto para fechar.';}
   else{$('#crOverline').textContent='02 · MAPEIE OS OBSTÁCULOS';$('#crTitle').textContent=CR.obstacles.length?'Revise a área.':'Adicione obstáculos.';$('#crHelp').textContent='Use círculos, polígonos ou divida a área com uma linha. Depois siga para as linhas.';}
   document.querySelectorAll('[data-cr-tool]').forEach(b=>{b.setAttribute('aria-pressed',String(b.dataset.crTool===CR.tool));if(['circulo','dreno','poligono','dividir'].includes(b.dataset.crTool))b.disabled=!has;if(b.dataset.crTool==='limite')b.disabled=has;});
+  // com desenho fechável, o botão da ferramenta ativa vira "✓ Concluir"
+  const conc=crPodeConcluir();
+  document.querySelectorAll('[data-cr-tool]').forEach(b=>{ const liga=conc && b.dataset.crTool===CR.tool;
+    if(liga && b.dataset.crOrig===undefined){ b.dataset.crOrig=b.innerHTML; b.innerHTML='<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>Concluir</span>'; b.classList.add('cr-concluir'); b.setAttribute('aria-label','Concluir o desenho'); }
+    else if(!liga && b.dataset.crOrig!==undefined){ b.innerHTML=b.dataset.crOrig; delete b.dataset.crOrig; b.classList.remove('cr-concluir'); b.removeAttribute('aria-label'); } });
   const ima=$('#crIma'); if(ima) ima.setAttribute('aria-pressed',String(!!CR.ima));
   $('#crUndo').disabled=!CR.history.length;$('#crDelete').disabled=!CR.selected&&!CR.draft.length&&!(CR.div&&CR.div.pts.length);$('#crSave').disabled=!has;$('#crKmz').disabled=!has||!!err;$('#crContinue').disabled=!has||!!err;
   $('#crOptions').hidden=!(CR.tool==='dreno'||CR.obstacles[CR.selected?.index]?.type==='drain');
