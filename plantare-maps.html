@@ -1131,6 +1131,12 @@ dialog.cp{width:min(980px,94vw);max-height:92vh;padding:0;color:var(--palha);ove
 .preco-box.gratis .pb-lin b{font-size:14px;color:var(--palha)}
 .pg-conta{font:11px var(--f-num);color:var(--poeira);margin:6px 0 14px}
 .pg-email{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.pg-login{display:flex;flex-direction:column;gap:8px;margin-top:12px}
+.pg-login .cupom{margin:0}
+.pg-ou{display:flex;align-items:center;gap:10px;font-size:11.5px;color:var(--poeira);letter-spacing:.04em}
+.pg-ou::before,.pg-ou::after{content:"";flex:1;height:1px;background:var(--fio2)}
+.pg-quem{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:12px 0 0;font-size:12.5px;color:var(--poeira)}
+.pg-quem b{color:#EEF5ED;font-weight:600;word-break:break-all;margin-left:4px}
 .pg-email input{min-height:42px;border-radius:5px;background:rgba(3,13,9,.45);border:1px solid var(--fio2);color:#EEF5ED;padding:0 12px;font:13px var(--f-texto)}
 #pgQr img{width:100%;height:100%;display:block;image-rendering:pixelated}
 .pg-espera{display:flex;align-items:center;gap:10px;margin:8px 0 0;font-size:13px;color:var(--palha)}
@@ -1325,9 +1331,18 @@ dialog.gp{width:min(860px,94vw)}
       <div class="cupom"><input id="pgCupom" autocomplete="off" spellcheck="false" placeholder="Seu código"><button class="btn btn-fio" type="button" id="pgAplicar">Aplicar</button></div>
       <div class="cupom-msg" id="pgCupomMsg" role="status"></div>
       <div class="total"><span>Total</span><b id="pgTotal"></b></div>
+      <div class="pg-login" id="pgLogin" hidden>
+        <p class="nota">Entre com sua conta para pagar. A compra fica ligada a ela: dá para baixar de novo, até em outro aparelho.</p>
+        <button type="button" class="btn btn-luz btn-bloco" id="pgGoogle">Entrar com Google</button>
+        <div class="pg-ou"><span>ou pelo e-mail</span></div>
+        <div class="cupom"><input id="pgLoginEmail" type="email" autocomplete="email" inputmode="email" placeholder="voce@fazenda.com.br" aria-label="Seu e-mail"><button class="btn btn-fio" type="button" id="pgLoginEnviar">Enviar link</button></div>
+        <div class="cupom" id="pgCodigoBox" hidden><input id="pgCodigo" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="Código do e-mail" aria-label="Código do e-mail"><button class="btn btn-fio" type="button" id="pgCodigoOk">Entrar</button></div>
+        <p class="cupom-msg" id="pgLoginMsg" role="status"></p>
+      </div>
+      <p class="pg-quem" id="pgQuem" hidden><span>Conta <b id="pgQuemEmail"></b></span><button class="link" type="button" id="pgSair">Sair</button></p>
       <div class="pg-email" id="pgEmailBox" hidden>
-        <label class="campo" for="pgEmail">E-mail para o comprovante</label>
-        <input id="pgEmail" type="email" autocomplete="email" inputmode="email" placeholder="voce@fazenda.com.br">
+        <label class="campo" for="pgEmail" hidden>E-mail para o comprovante</label>
+        <input id="pgEmail" type="email" autocomplete="email" inputmode="email" placeholder="voce@fazenda.com.br" hidden>
         <button type="button" class="btn btn-luz btn-bloco" id="pgGerar">Gerar Pix</button>
         <p class="cupom-msg" id="pgGerarMsg" role="status"></p>
       </div>
@@ -2534,156 +2549,6 @@ function medirPlano(plano, P){
 <script data-modulo="exportacao">
 "use strict";
 /* ============================ exportação (KML, KMZ, Shapefile, ZIP) ============================ */
-function prjText(kind, zone, south){
-  if(kind==='wgs84geo')
-    return 'GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137.0,298.257223563]],'
-         + 'PRIMEM["Greenwich",0.0],UNIT["Degree",0.0174532925199433]]';
-  const gcs = kind==='sirgas'
-    ? 'GEOGCS["GCS_SIRGAS_2000",DATUM["D_SIRGAS_2000",SPHEROID["GRS_1980",6378137.0,298.257222101]],PRIMEM["Greenwich",0.0],UNIT["Degree",0.0174532925199433]]'
-    : 'GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137.0,298.257223563]],PRIMEM["Greenwich",0.0],UNIT["Degree",0.0174532925199433]]';
-  const nm = (kind==='sirgas'?'SIRGAS_2000':'WGS_1984')+'_UTM_Zone_'+zone+(south?'S':'N');
-  return 'PROJCS["'+nm+'",'+gcs+',PROJECTION["Transverse_Mercator"],'
-       + 'PARAMETER["False_Easting",500000.0],PARAMETER["False_Northing",'+(south?10000000:0)+'.0],'
-       + 'PARAMETER["Central_Meridian",'+(zone*6-183)+'.0],PARAMETER["Scale_Factor",0.9996],'
-       + 'PARAMETER["Latitude_Of_Origin",0.0],UNIT["Meter",1.0]]';
-}
-function kmlText(nome, fieldRings, passes, proj, cor, extra){
-  const P=[];
-  const ll=pts=>pts.map(p=>{const q=proj.inv(p[0],p[1]); return q[0].toFixed(8)+','+q[1].toFixed(8)+',0';}).join(' ');
-  P.push('<?xml version="1.0" encoding="UTF-8"?>');
-  P.push('<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>'+esc(nome)+'</name>');
-  P.push('<Style id="l"><LineStyle><color>'+cor+'</color><width>2.2</width></LineStyle></Style>');
-  P.push('<Style id="bd"><LineStyle><color>ff37d67a</color><width>3</width></LineStyle><PolyStyle><fill>0</fill></PolyStyle></Style>');
-  P.push('<Folder><name>Cerca</name>');
-  fieldRings.forEach((r,i)=>P.push('<Placemark><name>Divisa '+(i+1)+'</name><styleUrl>#bd</styleUrl>'
-    +'<LineString><tessellate>1</tessellate><coordinates>'+ll(r)+'</coordinates></LineString></Placemark>'));
-  P.push('</Folder><Folder><name>Passes</name>');
-  passes.forEach((p,i)=>{
-    const d='Passe '+(p.ordem!=null?p.ordem:i+1)+(p.num?' · linha '+p.num:'')
-      +' ('+p.tipo+')<br/>Comprimento: '+p.L.toFixed(1)+' m<br/>Rumo: '+p.rumo.toFixed(1)+'&#176;'
-      ;
-    P.push('<Placemark><name>'+String(p.ordem!=null?p.ordem:i+1).padStart(3,'0')+'</name><description><![CDATA['+d+']]></description>'
-      +'<styleUrl>#l</styleUrl><LineString><tessellate>1</tessellate><coordinates>'+ll(p.pts)+'</coordinates></LineString></Placemark>');
-  });
-  P.push('</Folder>');
-  // as manobras saem em camada separada: o monitor mostra por onde a maquina anda sem aplicar
-  const manobras=(extra&&extra.manobras)||[];
-  if(manobras.length){
-    P.push('<Style id="mn"><LineStyle><color>ff1f6fa8</color><width>1.8</width></LineStyle></Style>');
-    P.push('<Folder><name>Manobras</name>');
-    manobras.forEach((m,i)=>P.push('<Placemark><name>M'+(i+1)+' ('+esc(m.tipo||'manobra')+')</name>'
-      +'<styleUrl>#mn</styleUrl><LineString><tessellate>1</tessellate><coordinates>'
-      +ll(m.pts)+'</coordinates></LineString></Placemark>'));
-    P.push('</Folder>');
-  }
-  const evitar=(extra&&extra.obstaculos)||[];
-  if(evitar&&evitar.length){
-    P.push('<Style id="ev"><LineStyle><color>ff552dff</color><width>2.4</width></LineStyle>'
-      +'<PolyStyle><color>55552dff</color></PolyStyle></Style>');
-    P.push('<Folder><name>Obstaculos</name>');
-    evitar.forEach((a,i)=>{
-      const r=a.pts.concat([a.pts[0]]);
-      P.push('<Placemark><name>Obstaculo '+(i+1)+'</name><styleUrl>#ev</styleUrl>'
-        +'<Polygon><tessellate>1</tessellate><outerBoundaryIs><LinearRing><coordinates>'
-        +ll(r)+'</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>');
-    });
-    P.push('</Folder>');
-  }
-  P.push('</Document></kml>');
-  return P.join('\n');
-}
-function shpPolyline(passes, toXY){
-  const recs=passes.map(p=>p.pts.map(toXY));
-  let bx=[Infinity,Infinity,-Infinity,-Infinity];
-  for(const r of recs) for(const p of r){
-    bx[0]=Math.min(bx[0],p[0]); bx[1]=Math.min(bx[1],p[1]);
-    bx[2]=Math.max(bx[2],p[0]); bx[3]=Math.max(bx[3],p[1]);
-  }
-  let total=50; const sizes=recs.map(r=>24+r.length*8);  // palavras de 16 bits: 4+16+2+2+2 + n*8
-  for(const s of sizes) total+=4+s;
-  const shp=new DataView(new ArrayBuffer(total*2));
-  const shx=new DataView(new ArrayBuffer((50+recs.length*4)*2));
-  function hdr(dv,len){
-    dv.setInt32(0,9994); dv.setInt32(24,len); dv.setInt32(28,1000,true); dv.setInt32(32,3,true);
-    dv.setFloat64(36,bx[0],true); dv.setFloat64(44,bx[1],true);
-    dv.setFloat64(52,bx[2],true); dv.setFloat64(60,bx[3],true);
-  }
-  hdr(shp,total); hdr(shx,50+recs.length*4);
-  let off=50;
-  recs.forEach((r,i)=>{
-    const len=sizes[i];
-    shp.setInt32(off*2,i+1); shp.setInt32(off*2+4,len);
-    let o=off*2+8;
-    shp.setInt32(o,3,true); o+=4;
-    let mx=[Infinity,Infinity,-Infinity,-Infinity];
-    for(const p of r){ mx[0]=Math.min(mx[0],p[0]); mx[1]=Math.min(mx[1],p[1]); mx[2]=Math.max(mx[2],p[0]); mx[3]=Math.max(mx[3],p[1]); }
-    shp.setFloat64(o,mx[0],true); shp.setFloat64(o+8,mx[1],true);
-    shp.setFloat64(o+16,mx[2],true); shp.setFloat64(o+24,mx[3],true); o+=32;
-    shp.setInt32(o,1,true); o+=4; shp.setInt32(o,r.length,true); o+=4;
-    shp.setInt32(o,0,true); o+=4;
-    for(const p of r){ shp.setFloat64(o,p[0],true); shp.setFloat64(o+8,p[1],true); o+=16; }
-    shx.setInt32(100+i*8,off); shx.setInt32(104+i*8,len);
-    off+=4+len;
-  });
-  return {shp:new Uint8Array(shp.buffer), shx:new Uint8Array(shx.buffer)};
-}
-/* dbf com campos escolhidos: [nome, tipo, tamanho, decimais] e uma função por registro */
-function dbfCampos(regs, fields, valores){
-  const recLen=1+fields.reduce((s,f)=>s+f[2],0);
-  const hdrLen=32+32*fields.length+1;
-  const buf=new Uint8Array(hdrLen+recLen*regs.length+1);
-  const dv=new DataView(buf.buffer), now=new Date();
-  buf[0]=3; buf[1]=now.getFullYear()-1900; buf[2]=now.getMonth()+1; buf[3]=now.getDate();
-  dv.setUint32(4,regs.length,true); dv.setUint16(8,hdrLen,true); dv.setUint16(10,recLen,true);
-  fields.forEach((f,i)=>{ const o=32+i*32;
-    for(let k=0;k<f[0].length&&k<10;k++) buf[o+k]=f[0].charCodeAt(k);
-    buf[o+11]=f[1].charCodeAt(0); buf[o+16]=f[2]; buf[o+17]=f[3]; });
-  buf[32+32*fields.length]=0x0D;
-  let o=hdrLen;
-  regs.forEach((r,i)=>{
-    buf[o++]=0x20;
-    const vals=valores(r,i);
-    fields.forEach((f,k)=>{
-      let t=vals[k];
-      if(f[1]==='N'){ t=Number(t||0).toFixed(f[3]); t=t.length>f[2]?t.slice(0,f[2]):t.padStart(f[2],' '); }
-      else { t=String(t==null?'':t); t=t.length>f[2]?t.slice(0,f[2]):t.padEnd(f[2],' '); }
-      for(let q=0;q<f[2];q++) buf[o+q]=t.charCodeAt(q)&0xFF;
-      o+=f[2];
-    });
-  });
-  buf[o]=0x1A;
-  return buf;
-}
-function dbf(passes){
-  const fields=[['PASSE','N',6,0],['LINHA','N',6,0],['TIPO','C',12,0],['COMP_M','N',12,1],['RUMO','N',7,1]];
-  const recLen=1+fields.reduce((s,f)=>s+f[2],0);
-  const hdrLen=32+32*fields.length+1;
-  const buf=new Uint8Array(hdrLen+recLen*passes.length+1);
-  const dv=new DataView(buf.buffer);
-  const now=new Date();
-  buf[0]=3; buf[1]=now.getFullYear()-1900; buf[2]=now.getMonth()+1; buf[3]=now.getDate();
-  dv.setUint32(4,passes.length,true); dv.setUint16(8,hdrLen,true); dv.setUint16(10,recLen,true);
-  fields.forEach((f,i)=>{
-    const o=32+i*32;
-    for(let k=0;k<f[0].length&&k<10;k++) buf[o+k]=f[0].charCodeAt(k);
-    buf[o+11]=f[1].charCodeAt(0); buf[o+16]=f[2]; buf[o+17]=f[3];
-  });
-  buf[32+32*fields.length]=0x0D;
-  let o=hdrLen;
-  passes.forEach((p,i)=>{
-    buf[o++]=0x20;
-    const vals=[p.ordem!=null?p.ordem:i+1,p.num||0,p.tipo,p.L,p.rumo];
-    fields.forEach((f,k)=>{
-      let s;
-      if(f[1]==='N'){ s=Number(vals[k]).toFixed(f[3]); s=s.length>f[2]?s.slice(0,f[2]):s.padStart(f[2],' '); }
-      else { s=String(vals[k]); s=s.length>f[2]?s.slice(0,f[2]):s.padEnd(f[2],' '); }
-      for(let t=0;t<f[2];t++) buf[o+t]=s.charCodeAt(t)&0xFF;
-      o+=f[2];
-    });
-  });
-  buf[o]=0x1A;
-  return buf;
-}
 function passAttrs(passes){
   return passes.map((p,i)=>{
     const a=p.pts[0], b=p.pts[p.pts.length-1];
@@ -2838,56 +2703,6 @@ function maisPertoNaLinhaSimples(pts,p){
   }
   return s;
 }
-function kmlPercurso(nome, pts, proj){
-  const ll=pts.map(p=>{const q=proj.inv(p[0],p[1]); return q[0].toFixed(8)+','+q[1].toFixed(8)+',0';}).join(' ');
-  return '<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>'+esc(nome)+' — percurso contínuo</name>'
-    +'<Style id="pc"><LineStyle><color>ff2dc0fb</color><width>2.2</width></LineStyle></Style>'
-    +'<Placemark><name>Percurso</name><styleUrl>#pc</styleUrl><LineString><tessellate>1</tessellate><coordinates>'+ll+'</coordinates></LineString></Placemark>'
-    +'</Document></kml>';
-}
-function kmlAB(nome, bordadura, linhasAB, proj, manobras, trechos){
-  const ll=pts=>pts.map(p=>{const q=proj.inv(p[0],p[1]); return q[0].toFixed(8)+','+q[1].toFixed(8)+',0';}).join(' ');
-  const P=['<?xml version="1.0" encoding="UTF-8"?>',
-    '<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>'+esc(nome)+' — bordadura e linhas AB</name>',
-    '<Style id="bd"><LineStyle><color>ff37d67a</color><width>3.4</width></LineStyle></Style>',
-    '<Style id="ab"><LineStyle><color>ffffffff</color><width>2</width></LineStyle></Style>',
-    '<Style id="pt"><IconStyle><scale>0.7</scale></IconStyle></Style>',
-    '<Folder><name>Bordadura</name>'];
-  bordadura.forEach((b,i)=>P.push('<Placemark><name>Bordadura'+(bordadura.length>1?' '+(i+1):'')+'</name><styleUrl>#bd</styleUrl>'
-    +'<LineString><tessellate>1</tessellate><coordinates>'+ll(b)+'</coordinates></LineString></Placemark>'));
-  P.push('</Folder><Folder><name>Linhas AB</name>');
-  linhasAB.forEach(l=>{
-    const a=proj.inv(l.pts[0][0],l.pts[0][1]), b=proj.inv(l.pts[l.pts.length-1][0],l.pts[l.pts.length-1][1]);
-    const nm=String(l.num).padStart(3,'0')+(l.parte?'-'+l.parte:'');
-    const d='Linha '+nm+'<br/>A: '+a[1].toFixed(7)+', '+a[0].toFixed(7)+'<br/>B: '+b[1].toFixed(7)+', '+b[0].toFixed(7)
-      +'<br/>Comprimento: '+plen(l.pts).toFixed(1)+' m';
-    P.push('<Placemark><name>'+nm+'</name><description><![CDATA['+d+']]></description><styleUrl>#ab</styleUrl>'
-      +'<LineString><tessellate>1</tessellate><coordinates>'+ll(l.pts)+'</coordinates></LineString></Placemark>');
-  });
-  P.push('</Folder>');
-  if(manobras && manobras.length){
-    P.push('<Style id="mn"><LineStyle><color>ff5aa9e9</color><width>1.6</width></LineStyle></Style>');
-    P.push('<Folder><name>Manobras</name>');
-    manobras.forEach((m,i)=>P.push('<Placemark><name>M'+String(i+1).padStart(3,'0')+'</name><styleUrl>#mn</styleUrl>'
-      +'<LineString><tessellate>1</tessellate><coordinates>'+ll(m.pts)+'</coordinates></LineString></Placemark>'));
-    P.push('</Folder><Folder><name>Linhas AB + manobras</name>');
-    (trechos&&trechos.length?trechos:linhasAB.map(l=>l.pts)).forEach((pts,i)=>
-      P.push('<Placemark><name>Trecho '+String(i+1).padStart(2,'0')+'</name><styleUrl>#ab</styleUrl>'
-        +'<LineString><tessellate>1</tessellate><coordinates>'+ll(pts)+'</coordinates></LineString></Placemark>'));
-    P.push('</Folder>');
-  }
-  P.push('<Folder><name>Pontos A e B</name>');
-  linhasAB.forEach(l=>{
-    const nm=String(l.num).padStart(3,'0')+(l.parte?'-'+l.parte:'');
-    [['A',l.pts[0]],['B',l.pts[l.pts.length-1]]].forEach(([r,p])=>{
-      const q=proj.inv(p[0],p[1]);
-      P.push('<Placemark><name>'+nm+r+'</name><styleUrl>#pt</styleUrl><Point><coordinates>'+q[0].toFixed(8)+','+q[1].toFixed(8)+',0</coordinates></Point></Placemark>');
-    });
-  });
-  P.push('</Folder></Document></kml>');
-  return P.join('\n');
-}
-/* ===================== PDF (sem biblioteca) ===================== */
 const MAPA_WIN={0x2014:0x97, 0x2013:0x96, 0x2018:0x91, 0x2019:0x92, 0x201C:0x93, 0x201D:0x94, 0x2026:0x85, 0x2022:0x95};
 function latin1(s){ const o=new Uint8Array(s.length); for(let i=0;i<s.length;i++){ const c=s.charCodeAt(i); o[i]=c<256?c:(MAPA_WIN[c]||63); } return o; }
 function pdfEsc(s){ return String(s).replace(/\\/g,'\\\\').replace(/\(/g,'\\(').replace(/\)/g,'\\)'); }
@@ -3008,96 +2823,18 @@ function pdfRelatorio(dados){
   return montarPDF(paginas);
 }
 
-function buildPackage(nome, field, passes, proj, crs, extra){
-  const enc=new TextEncoder();
-  const kml=kmlText(nome, field.rings, passes, proj, 'ff2dc0fb', extra||null);
-  const kmlU8=enc.encode(kml);
-  const kmzBytes=zipBytes([{name:nome+'.kml',data:kmlU8}]);
-  const kmz=new Blob([kmzBytes],{type:'application/vnd.google-earth.kmz'});
-  const utm=shpPolyline(passes, p=>p);
-  const geo=shpPolyline(passes, p=>proj.inv(p[0],p[1]));
-  const d=dbf(passes);
-  const files=[{name:nome+'.kml',data:kmlU8}];
-  // arquivo separado com duas camadas: bordadura e linhas AB (sem cruzamentos)
-  let ab=null, pdf=null;
-  const x=extra||{};
-  if(x.linhasAB){
-    const kmlAb=enc.encode(kmlAB(nome, x.bordadura||[], x.linhasAB, proj, x.manobras||[], x.trechosPercurso||[]));
-    const abBytes=zipBytes([{name:nome+'_ab.kml',data:kmlAb}]);
-    ab=new Blob([abBytes],{type:'application/vnd.google-earth.kmz'});
-    files.push({name:nome+'_ab.kml',data:kmlAb}, {name:nome+'_ab.kmz',data:abBytes});
-  }
+/* No navegador sai só o que é grátis (o relatório PDF). Os arquivos pagos (KML, KMZ, AB, rota,
+   Shapefile, GeoJSON, CSV) são montados no servidor, depois do pagamento: pix-worker/src/exportar.js. */
+function pacoteLocal(nome, extra){
+  const x=extra||{}; let pdf=null; const arquivos=[];
   if(x.pdf){
     try{
-      const bytes=pdfRelatorio(Object.assign({nome, proj, linhasAB:x.linhasAB||[]}, x.pdf));
+      const bytes=pdfRelatorio(Object.assign({nome, proj:x.proj, linhasAB:x.linhasAB||[]}, x.pdf));
       pdf=new Blob([bytes],{type:'application/pdf'});
-      files.push({name:nome+'_relatorio.pdf',data:bytes});
+      arquivos.push({name:nome+'_relatorio.pdf',data:bytes});
     }catch(e){ /* sem relatório, o resto continua */ }
   }
-  let rotaKmz=null;
-  if(x.percurso){
-    const p=enc.encode(kmlPercurso(nome, x.percurso, proj));
-    rotaKmz=zipBytes([{name:nome+'_rota.kml',data:p}]);
-    files.push({name:nome+'_rota.kml',data:p}, {name:nome+'_rota.kmz',data:rotaKmz});
-  }
-  // o KMZ do plano completo também entra no pacote
-  files.push({name:nome+'.kmz',data:kmzBytes});
-  /* cada camada também sai como shapefile próprio (shp, shx, dbf, prj), em UTM e em WGS 84 */
-  const escolha=x.shp||{}, quer=k=>!escolha.camadas || escolha.camadas[k];
-  const renomear=fs=>x.campos?fs.map(f=>[x.campos[f[0]]||f[0], f[1], f[2], f[3]]):fs;
-  const parte=k=>!escolha.partes || escolha.partes[k];
-  const sistema=k=>!escolha.sistemas || escolha.sistemas[k];
-  const camada=(nomeCam, recs, fields, valores)=>{
-    if(!recs.length || !quer(nomeCam)) return;
-    const d=dbfCampos(recs, renomear(fields), valores);
-    [['utm','utm', q=>q, prjText(crs.kind,crs.zone,crs.south)], ['wgs84','wgs', q=>proj.inv(q[0],q[1]), prjText('wgs84geo')]].forEach(([sis,chave,conv,prj])=>{
-      if(!sistema(chave)) return;
-      const g=shpPolyline(recs, conv);
-      const ordem={bordadura:'01', linhas_ab:'02', manobras:'03', percurso:'04', tudo:'05'}[nomeCam]||'';
-      const base='shapefile/'+nome+'_'+(ordem?ordem+'_':'')+nomeCam+'_'+sis;
-      if(parte('shp')) files.push({name:base+'.shp',data:g.shp});
-      if(parte('shx')) files.push({name:base+'.shx',data:g.shx});
-      if(parte('dbf')) files.push({name:base+'.dbf',data:d});
-      if(parte('prj')) files.push({name:base+'.prj',data:enc.encode(prj)});
-      if(parte('cpg')) files.push({name:base+'.cpg',data:enc.encode('ISO-8859-1')});
-    });
-  };
-  const ll=q=>proj.inv(q[0],q[1]);
-  camada('bordadura', (x.bordadura||[]).map((pts,i)=>({pts, i})),
-    [['CAMADA','C',12,0],['TRECHO','N',6,0],['COMP_M','N',12,1]],
-    r=>['bordadura', r.i+1, plen(r.pts)]);
-  camada('linhas_ab', (x.linhasAB||[]).map(l=>({pts:l.pts, num:l.num, parte:l.parte})),
-    [['LINHA','N',6,0],['PARTE','N',4,0],['NOME','C',12,0],['COMP_M','N',12,1],['RUMO','N',7,1],
-     ['A_LAT','N',14,7],['A_LON','N',14,7],['B_LAT','N',14,7],['B_LON','N',14,7]],
-    r=>{ const a=ll(r.pts[0]), b=ll(r.pts[r.pts.length-1]);
-      return [r.num, r.parte||0, String(r.num).padStart(3,'0')+(r.parte?'-'+r.parte:''), plen(r.pts),
-        (Math.atan2(r.pts[r.pts.length-1][0]-r.pts[0][0], r.pts[r.pts.length-1][1]-r.pts[0][1])*180/Math.PI+360)%360,
-        a[1], a[0], b[1], b[0]]; });
-  camada('manobras', (x.manobras||[]).map((m,i)=>({pts:m.pts, tipo:m.tipo, i})),
-    [['MANOBRA','N',6,0],['TIPO','C',12,0],['COMP_M','N',12,1]],
-    r=>[r.i+1, r.tipo||'manobra', plen(r.pts)]);
-  const rumoDe2=pts=>(Math.atan2(pts[pts.length-1][0]-pts[0][0], pts[pts.length-1][1]-pts[0][1])*180/Math.PI+360)%360;
-  const camposJuntos=[['CAMADA','C',10,0],['LINHA','N',6,0],['PARTE','N',4,0],['NOME','C',12,0],['COMP_M','N',12,1],['RUMO','N',7,1]];
-  const valoresJuntos=r=>[r.camada, r.num||0, r.parte||0, r.nome||'', plen(r.pts), rumoDe2(r.pts)];
-  const regAB=(x.linhasAB||[]).map(l=>({pts:l.pts, camada:'linha_ab', num:l.num, parte:l.parte||0,
-    nome:String(l.num).padStart(3,'0')+(l.parte?'-'+l.parte:'')}));
-  // linhas e manobras emendadas: cada feição é um pedaço contínuo do caminho
-  const regPercurso=(x.trechosPercurso||[]).map((pts,i)=>({pts, camada:'percurso', num:i+1, parte:0, nome:'P'+String(i+1).padStart(2,'0')}));
-  const regMan=(x.manobras||[]).map((m,i)=>({pts:m.pts, camada:'manobra', num:0, parte:0, nome:'M'+String(i+1).padStart(3,'0')}));
-  const regBord=(x.bordadura||[]).map((pts,i)=>({pts, camada:'bordadura', num:0, parte:0, nome:'BORD'+(i+1)}));
-  // percurso: as linhas AB com as manobras, na mesma camada
-  camada('percurso', regPercurso.length?regPercurso:regAB.concat(regMan), camposJuntos, valoresJuntos);
-  // tudo junto: bordadura + linhas AB + manobras num arquivo só
-  camada('tudo', regBord.concat(regAB, regMan), camposJuntos, valoresJuntos);
-  // se o monitor pede uma pasta própria, tudo entra dentro dela
-  const pasta=(x.pasta||'').replace(/^\/+|\/+$/g,'');
-  const finais=pasta?files.map(f=>({name:pasta+'/'+f.name, data:f.data})):files;
-  if(pasta) finais.push({name:'LEIA-ME.txt', data:enc.encode(
-    'Plantare Maps\r\nPerfil: '+(x.perfil||'')+'\r\nCopie a pasta "'+pasta+'" para a raiz do pen drive.\r\n'
-    +'Camadas: bordadura (perímetro da borda) e linhas AB numeradas, sem cruzamento.\r\n')});
-  return {arquivos:finais, kml:new Blob([kmlU8],{type:'application/vnd.google-earth.kml+xml'}), kmz, ab, pdf,
-    rota:rotaKmz?new Blob([rotaKmz],{type:'application/vnd.google-earth.kmz'}):null,
-    zip:zipBlob(finais)};
+  return {arquivos, pdf};
 }
 function download(blob,name){
   const a=document.createElement('a');
@@ -6440,22 +6177,9 @@ const TAREFAS={
     const c=nucGarantir(d);
     const cost=costurarLegs(d.legs);
     const legs=cost.legs;
-    const passes=legs.filter(l=>l.t==='w').map((l,i)=>({pts:l.p, tipo:l.tipo, ordem:i+1, num:l.num||0}));
-    const manobras=legs.filter(l=>l.t==='m').map(l=>({pts:l.p, tipo:l.tipo}));
-    const obst=(c.obstaculos||[]).map(pts=>({pts}));
-    // a bordadura sai como um anel só, na ordem em que a máquina anda nela
-    const pedacosBord=legs.filter(l=>l.tipo==='bordadura').map(l=>l.p);
-    const bordadura=[];
-    if(pedacosBord.length){
-      const unido=[];
-      for(const pts of pedacosBord) for(const q of pts) if(!unido.length || dist(q,unido[unido.length-1])>1e-6) unido.push(q);
-      bordadura.push(unido);
-    }
     const linhasAB=partirNosCruzamentos(legs.filter(l=>l.t==='w'&&l.tipo==='interior').map(l=>({num:l.num||0, pts:l.p})));
     const pdf=d.pdf ? Object.assign({campo:{bounds:c.bounds, cerca:c.cerca, obst:c.obstaculos||[]}, legs}, d.pdf) : null;
-    const pk=buildPackage(d.nome, c, passAttrs(passes), NUC.proj, d.crs,
-      {manobras, obstaculos:obst, bordadura, linhasAB, pdf, percurso:percursoContinuo(legs), trechosPercurso:trechosDeTrabalho(legs), shp:d.shp||null,
-       pasta:d.pasta||'', campos:d.campos||null, perfil:d.perfil||''});
+    const pk=pacoteLocal(d.nome, {pdf, proj:NUC.proj, linhasAB});
     pk.costura={costuras:cost.costuras, vaos:cost.vaos.length, partes:linhasAB.filter(l=>l.parte).length, linhas:linhasAB.length};
     return pk;
   },
@@ -7163,13 +6887,35 @@ function camadasCobradas(){
 }
 function areaCobradaHa(){ return areaPoligonos(E.polysLL)/1e4; }
 function precoAtual(cupom){ return calcularPreco(areaCobradaHa(), camadasCobradas(), cupom||0); }
-/* planos já pagos neste navegador: baixar de novo o mesmo plano (com as mesmas camadas ou menos) não cobra outra vez */
-const PAGOS_CHAVE='plantare_pagos';
-function pagosLer(){ try{ return JSON.parse(localStorage.getItem(PAGOS_CHAVE)||'{}'); }catch(e){ return {}; } }
-function pagoCobre(id, camadas){ const p=pagosLer()[id]; return !!p && camadas.every(c=>p.camadas.includes(c)); }
-function pagoGuardar(id, camadas, pedido){ try{ const t=pagosLer(); const antes=t[id]?t[id].camadas:[]; t[id]={camadas:[...new Set(antes.concat(camadas))], pedido, quando:new Date().toISOString()}; localStorage.setItem(PAGOS_CHAVE, JSON.stringify(t)); }catch(e){} }
+/* compras pagas da conta (vêm do servidor): o mesmo talhão com as mesmas camadas (ou menos) baixa de novo sem cobrar */
+function compraQueCobre(camadas){
+  if(!CONTA.compras || AREA_HASH.polys!==E.polysLL || !AREA_HASH.valor) return null;
+  return CONTA.compras.find(c=>c.area_hash===AREA_HASH.valor && camadas.every(k=>(c.camadas||[]).includes(k)))||null;
+}
+function pagoCobre(id, camadas){ return !!compraQueCobre(camadas); }
+let contaSinc=null, contaSincPara=null;
+async function contaSincronizar(forcar){
+  if(!pixApi() || !contaLogada() || !E.polysLL) return;
+  if(forcar) CONTA.compras=null;
+  if(contaSinc) return contaSinc;
+  contaSinc=(async()=>{
+    try{ await hashDoTalhao(E.polysLL); AREA_HASH.polys=E.polysLL;
+      if(!CONTA.compras){ const r=await pgChamar('/eu'); CONTA.compras=r.compras||[]; } }
+    catch(e){ /* sem rede: a tela segue com o preço cheio */ }
+    finally{ contaSinc=null; }
+  })();
+  return contaSinc;
+}
+/* a tela de arquivos pergunta ao servidor uma vez por talhão e conta */
+function contaSincronizarTela(){
+  const chave=E.polysLL && contaLogada() ? CONTA.sessao.email : null;
+  if(!chave || !pixApi() || (contaSincPara && contaSincPara.polys===E.polysLL && contaSincPara.email===chave && CONTA.compras)) return;
+  contaSincPara={polys:E.polysLL, email:chave};
+  contaSincronizar().then(()=>{ if(E.passo==='arquivos' && typeof atualizarPainel==='function') atualizarPainel(); });
+}
 /* resumo de preço para a tela de arquivos */
 function htmlPreco(){
+  contaSincronizarTela();
   const p=precoAtual(), id=idPlano(), jaPago=p.camadas.length && pagoCobre(id, p.camadas);
   if(!p.camadas.length) return '<div class="preco-box gratis"><div class="pb-lin"><span>Só arquivos grátis</span><b>R$ 0,00</b></div><p>Relatório, imagem e projeto não são cobrados. Marque um formato de mapa para levar as camadas ao monitor.</p></div>';
   let h='<div class="preco-box'+(jaPago?' pago':'')+'"><div class="pb-cab"><span class="mb-over">Valor</span>'+(jaPago?'<span class="pb-selo">já pago</span>':'')+'</div>';
@@ -7178,8 +6924,90 @@ function htmlPreco(){
   h+='<div class="pb-lin"><span>'+(p.minimoAplicado?'Mínimo por compra':'Soma das camadas')+'</span><b>'+brl(p.porHa)+'<small>/ha</small></b></div>';
   if(p.partes.length>1){ h+='<div class="pb-faixas">'+p.partes.map(x=>'<span>'+fmt(x.de,0)+'–'+fmt(x.ate,x.ate%1?1:0)+' ha'+(x.desconto?' · −'+Math.round(x.desconto*100)+'%':'')+'</span><b>'+brl(x.valor)+'</b>').join('')+'</div>'; }
   h+='<div class="pb-total"><span>'+fmt(p.ha,2)+' ha'+(p.partes.length>1?' · economia de '+brl(p.semDesconto-p.subtotal):'')+'</span><b>'+brl(p.total)+'</b></div>';
-  h+=jaPago?'<p>Este plano já foi pago neste navegador: o download sai sem nova cobrança.</p>':'<p>Relatório, imagem e projeto são grátis. Cada camada paga leva todos os formatos.</p>';
+  h+=jaPago?'<p>Este talhão já foi pago na sua conta ('+esc(contaEmail())+'): o download sai sem nova cobrança.</p>':'<p>Relatório, imagem e projeto são grátis. Cada camada paga leva todos os formatos, gerados no servidor e ligados à sua conta.</p>';
   return h+'</div>';
+}
+</script>
+
+<script data-modulo="conta">
+"use strict";
+/* ---- conta (login no Supabase) ----
+   Compras, cupons e downloads pagos ficam ligados à conta. Sem biblioteca: a API de login do Supabase
+   é chamada direto (Google por janela, ou link/código por e-mail). A chave publicável pode ficar no app;
+   a chave secreta só existe no Worker. */
+const SB_URL='https://yhzyfcdfpezgtnrrslqv.supabase.co';
+const SB_CHAVE='sb_publishable_avQLpdS9TwtNE9PKu-1E5w_xLI7OzR5';
+const CONTA_CHAVE='plantare.conta';
+const CONTA={sessao:null, compras:null, erro:'', ouvintes:[]};
+function contaLer(){ try{ return JSON.parse(localStorage.getItem(CONTA_CHAVE)||'null'); }catch(e){ return null; } }
+function contaAvisar(){ for(const f of CONTA.ouvintes) try{ f(CONTA.sessao); }catch(e){} }
+function contaGravar(s){
+  CONTA.sessao=s; CONTA.compras=null;
+  try{ if(s) localStorage.setItem(CONTA_CHAVE, JSON.stringify(s)); else localStorage.removeItem(CONTA_CHAVE); }catch(e){}
+  contaAvisar();
+}
+function jwtDados(t){ try{ const b=t.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'); return JSON.parse(decodeURIComponent(escape(atob(b+'==='.slice((b.length+3)%4))))); }catch(e){ return {}; } }
+function sessaoDe(j){
+  const d=jwtDados(j.access_token||'');
+  return {access_token:j.access_token, refresh_token:j.refresh_token, expira:(d.exp?d.exp*1000:Date.now()+(+j.expires_in||3600)*1000),
+    email:String((j.user&&j.user.email)||d.email||'').toLowerCase()};
+}
+async function sbAuth(caminho, corpo, token){
+  const r=await fetch(SB_URL+'/auth/v1/'+caminho, {method:'POST', headers:Object.assign({apikey:SB_CHAVE,'content-type':'application/json'}, token?{authorization:'Bearer '+token}:{}), body:JSON.stringify(corpo||{})});
+  let j=null; try{ j=await r.json(); }catch(e){}
+  if(!r.ok) throw new Error((j&&(j.msg||j.error_description||j.message))||'Não foi possível entrar agora.');
+  return j||{};
+}
+function contaLogada(){ return !!(CONTA.sessao||(CONTA.sessao=contaLer())); }
+function contaEmail(){ return contaLogada()?CONTA.sessao.email:''; }
+/* token válido (renova se estiver para vencer); null se não houver conta */
+async function contaToken(){
+  if(!contaLogada()) return null;
+  const s=CONTA.sessao;
+  if(s.expira-Date.now()>60e3) return s.access_token;
+  try{ const j=await sbAuth('token?grant_type=refresh_token',{refresh_token:s.refresh_token}); contaGravar(sessaoDe(j)); return CONTA.sessao.access_token; }
+  catch(e){ contaGravar(null); return null; }
+}
+/* endereço de volta do login: a própria página, sem hash */
+const contaVolta=()=>location.origin+location.pathname;
+function entrarGoogle(){
+  const url=SB_URL+'/auth/v1/authorize?provider=google&redirect_to='+encodeURIComponent(contaVolta());
+  const w=window.open(url,'plantare_login','width=480,height=680');
+  if(!w){ try{ if(typeof salvar==='function') salvar(); }catch(e){} location.href=url; }   // janela bloqueada: vai e volta (o projeto fica salvo)
+}
+async function enviarLinkEmail(email){ await sbAuth('otp?redirect_to='+encodeURIComponent(contaVolta()), {email, create_user:true}); }
+async function confirmarCodigoEmail(email, codigo){ contaGravar(sessaoDe(await sbAuth('verify',{type:'email', email, token:codigo}))); }
+async function sairConta(){ const t=CONTA.sessao&&CONTA.sessao.access_token; contaGravar(null); if(t) sbAuth('logout',{},t).catch(()=>{}); }
+/* volta do Google ou do link do e-mail: #access_token=…&refresh_token=… */
+(()=>{
+  const h=new URLSearchParams(location.hash.slice(1));
+  if(h.get('access_token')){
+    const s=sessaoDe({access_token:h.get('access_token'), refresh_token:h.get('refresh_token'), expires_in:h.get('expires_in')});
+    contaGravar(s);
+    history.replaceState(null,'',location.pathname+location.search);
+    if(!s.email) fetch(SB_URL+'/auth/v1/user',{headers:{apikey:SB_CHAVE, authorization:'Bearer '+s.access_token}}).then(r=>r.ok?r.json():null)
+      .then(u=>{ if(u&&u.email&&CONTA.sessao&&CONTA.sessao.access_token===s.access_token) contaGravar(Object.assign({},s,{email:String(u.email).toLowerCase()})); }).catch(()=>{});
+    if(window.opener && window.name==='plantare_login'){ try{ window.opener.postMessage({plantareConta:1}, location.origin); }catch(e){} window.close(); }
+  }else if(h.get('error_description')){
+    CONTA.erro=h.get('error_description'); history.replaceState(null,'',location.pathname+location.search);
+  }
+})();
+/* login feito em outra aba ou na janela do Google */
+addEventListener('storage',e=>{ if(e.key===CONTA_CHAVE){ CONTA.sessao=contaLer(); CONTA.compras=null; contaAvisar(); } });
+/* app instalado (PWA): o login pode terminar em outra janela; ao voltar, relê a sessão */
+document.addEventListener('visibilitychange',()=>{ if(document.visibilityState!=='visible') return;
+  const s=contaLer(), a=CONTA.sessao; if((s&&s.access_token)!==(a&&a.access_token)){ CONTA.sessao=s; CONTA.compras=null; contaAvisar(); } });
+addEventListener('message',e=>{ if(e.origin===location.origin && e.data && e.data.plantareConta){ CONTA.sessao=contaLer(); CONTA.compras=null; contaAvisar(); } });
+
+/* impressão digital do talhão — a mesma conta do Worker (hashTalhao) */
+const AREA_HASH={chave:null, valor:null};
+async function hashDoTalhao(polys){
+  const r7=v=>Math.round(v*1e7)/1e7, anel=r=>r.map(p=>[r7(+p[0]), r7(+p[1])]);
+  const canon=JSON.stringify(polys.map(p=>[anel(p.outer), (p.holes||[]).map(anel)]));
+  if(AREA_HASH.chave===canon) return AREA_HASH.valor;
+  const d=new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canon)));
+  AREA_HASH.chave=canon; AREA_HASH.valor=[...d].map(b=>b.toString(16).padStart(2,'0')).join('');
+  return AREA_HASH.valor;
 }
 </script>
 
@@ -9685,47 +9513,96 @@ function pgMostrarTotal(){
   const p=PG.preco;
   $('#pgItens').innerHTML=p.camadas.length?p.camadas.map(c=>'<span class="pilula">'+esc(NOMES_CAMADAS[c])+' · '+brl(PRECO.camadas[c])+'/ha</span>').join(''):'<span class="pilula">Relatório, imagem e projeto</span>';
   $('#pgConta').innerHTML=p.total?(fmt(p.ha,2)+' ha × '+brl(p.porHa)+'/ha'+(p.minimoAplicado?' (mínimo)':'')+(p.partes.length>1?' · desconto por área −'+brl(p.semDesconto-p.subtotal):'')+(p.cupom?' · cupom −'+Math.round(p.cupom*100)+'%':'')+(p.fixo?' · cupom: preço fixo':'')):'';
-  $('#pgTotal').innerHTML=PG.modo==='gratis'?(p.total&&pagoCobre(PG.id,p.camadas)?'<s>'+brl(p.total)+'</s> já pago':brl(0)):brl(p.total)+(PG.modo==='demo'?' <small class="nota" style="font-family:var(--f-texto);font-weight:400">demonstração</small>':'');
+  $('#pgTotal').innerHTML=PG.modo==='gratis'?(p.total&&PG.jaPago?'<s>'+brl(p.total)+'</s> já pago':brl(0)):brl(p.total)+(PG.modo==='demo'?' <small class="nota" style="font-family:var(--f-texto);font-weight:400">demonstração</small>':'');
 }
 function abrirPagamento(){
   const n=contarArquivos(); if(!n || !E.aprovado || E.passo!=='arquivos') return;
   const id=idPlano(); pgPararEspera();
-  PG.id=id; PG.cupom=''; PG.pedido=null; PG.preco=precoAtual(); PG.camadas=PG.preco.camadas.slice();
-  PG.modo = (!PG.preco.total || pagoCobre(id, PG.camadas)) ? 'gratis' : pixApi() ? 'pix' : 'demo';
+  PG.id=id; PG.cupom=''; PG.pedido=null; PG.jaPago=false; PG.cortesia=false; PG.preco=precoAtual(); PG.camadas=PG.preco.camadas.slice();
+  const ja=PG.preco.total && pixApi() ? compraQueCobre(PG.camadas) : null;
+  if(ja){ PG.pedido=ja.id; PG.jaPago=true; }
+  PG.modo = (!PG.preco.total || ja) ? 'gratis' : pixApi() ? 'pix' : 'demo';
   $('#pgId').textContent='#'+id;
   $('#pgResumo').textContent=(E.arquivo||'Talhão')+' · '+fmt(PG.preco.ha||areaCobradaHa(),1)+' ha · '+n+(n===1?' arquivo':' arquivos');
-  pgMostrarTotal();
   $('#pgCupom').value=''; $('#pgCupomMsg').textContent='';
   $('#pgAceite').checked=false; $('#pgAceite').disabled=false;
   $('#pgEtapaAceite').hidden=false; $('#pgDetalhes').hidden=true; $('#pgDetalhes').inert=true;
   $('#pgPago').hidden=true; $('#pgFechar').disabled=false; $('#pgConcluir').hidden=true; $('#pgConcluir').disabled=false; $('#pgStatus').textContent='';
+  $('#pgGerar').disabled=false; $('#pgGerarMsg').textContent=''; $('#pgGerar').textContent='Gerar Pix';
+  $('#pgCodigoBox').hidden=true; $('#pgLoginMsg').textContent=''; $('#pgLoginEmail').value=contaEmail()||(()=>{ try{ return localStorage.getItem('plantare_email')||''; }catch(e){ return ''; } })();
+  pgConfigurar();
+  entregaConfirmada=false;
+  $('#pagamento').showModal();
+  // conta logada: confere no servidor se este talhão já foi pago
+  if(PG.modo==='pix' && contaLogada()) contaSincronizar(true).then(pgConferirJaPago);
+}
+/* monta a etapa 02 conforme o modo */
+function pgConfigurar(){
+  pgMostrarTotal();
   $('#pgDemo').hidden=PG.modo!=='demo';
   document.querySelector('#pgDetalhes .cupom').hidden=PG.modo==='gratis'; $('label[for="pgCupom"]').hidden=PG.modo==='gratis';
-  $('#pgEmailBox').hidden=PG.modo!=='pix'; $('#pgGerar').disabled=false; $('#pgGerarMsg').textContent=''; $('#pgGerar').textContent='Gerar Pix'; PG.cortesia=false;
   $('#pgPix').hidden=PG.modo==='pix'; $('#pgEspera').hidden=true; $('#pgCopiar').disabled=false;
   $('#pgQr').hidden=PG.modo==='gratis'; document.querySelector('#pgPix .copia').hidden=PG.modo==='gratis';
-  $('#pgSimular').hidden=false; $('#pgSimular').disabled=true;
+  $('#pgSimular').hidden=false; $('#pgSimular').disabled=!$('#pgAceite').checked || PG.modo==='pix';
   $('#pgSimular').textContent=PG.modo==='gratis'?'Baixar os arquivos':'Confirmar simulação e baixar';
-  $('#pgPixNota').textContent=PG.modo==='gratis'?(PG.preco.total?'Este plano já foi pago neste navegador.':'Nada a pagar: só arquivos grátis.'):'Confirme para baixar os arquivos e voltar ao início.';
-  try{ const em=localStorage.getItem('plantare_email'); if(em) $('#pgEmail').value=em; }catch(e){}
-  entregaConfirmada=false;
-  if(PG.modo==='demo'){ const codigo='PLANTARE-PREVIA-SEM-COBRANCA-'+id; $('#pgCopia').value=codigo; $('#pgQr').innerHTML=qrSvg(codigo); $('#pgQr').setAttribute('aria-label','QR demonstrativo, sem cobrança'); }
-  $('#pagamento').showModal();
+  $('#pgPixNota').textContent=PG.modo==='gratis'
+    ?(PG.jaPago?'Este talhão já foi pago na sua conta: os arquivos saem de novo sem cobrança.':'Nada a pagar: só arquivos grátis.')
+    :'Demonstração: saem só os arquivos grátis (relatório, imagem e projeto). Os mapas para o monitor são gerados no servidor depois do Pix.';
+  if(PG.modo==='demo'){ const codigo='PLANTARE-PREVIA-SEM-COBRANCA-'+PG.id; $('#pgCopia').value=codigo; $('#pgQr').innerHTML=qrSvg(codigo); $('#pgQr').setAttribute('aria-label','QR demonstrativo, sem cobrança'); }
+  pgContaTela();
 }
+/* login / conta dentro da etapa 02 */
+function pgContaTela(){
+  const logado=contaLogada(), precisa=(PG.modo==='pix' || PG.cortesia) && !(PG.pedido && !PG.cortesia);
+  $('#pgLogin').hidden=!(precisa && !logado);
+  $('#pgQuem').hidden=!(logado && pixApi()); $('#pgQuemEmail').textContent=contaEmail();
+  $('#pgEmailBox').hidden=!(precisa && logado);
+  if(CONTA.erro){ $('#pgLoginMsg').textContent='Não foi possível entrar: '+CONTA.erro; CONTA.erro=''; }
+}
+function pgConferirJaPago(){
+  if(!$('#pagamento').open || PG.pedido || entregaConfirmada) return;
+  const c=compraQueCobre(PG.camadas); if(!c) return;
+  PG.pedido=c.id; PG.jaPago=true; PG.modo='gratis'; PG.cupom=''; pgConfigurar();
+}
+CONTA.ouvintes.push(()=>{
+  if($('#pagamento').open){ pgContaTela(); if(contaLogada() && /^Entre na sua conta/.test($('#pgCupomMsg').textContent)) $('#pgCupomMsg').textContent='';
+    if(PG.modo==='pix' && contaLogada()) contaSincronizar(true).then(pgConferirJaPago); }
+  if(E.passo==='arquivos' && typeof atualizarPainel==='function') atualizarPainel();
+});
+$('#pgGoogle').addEventListener('click', entrarGoogle);
+$('#pgLoginEnviar').addEventListener('click', async()=>{
+  const email=$('#pgLoginEmail').value.trim();
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ $('#pgLoginMsg').textContent='Informe um e-mail válido.'; $('#pgLoginEmail').focus(); return; }
+  $('#pgLoginEnviar').disabled=true; $('#pgLoginMsg').textContent='Enviando…';
+  try{ await enviarLinkEmail(email); try{ localStorage.setItem('plantare_email', email); }catch(e){}
+    $('#pgCodigoBox').hidden=false; $('#pgLoginMsg').textContent='Enviamos um link para '+email+'. Abra neste aparelho (ou digite o código do e-mail, se vier um).'; $('#pgCodigo').focus(); }
+  catch(e){ $('#pgLoginMsg').textContent=e.message; }
+  finally{ setTimeout(()=>$('#pgLoginEnviar').disabled=false, 20000); }
+});
+$('#pgLoginEmail').addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); $('#pgLoginEnviar').click(); } });
+$('#pgCodigoOk').addEventListener('click', async()=>{
+  const cod=$('#pgCodigo').value.replace(/\D/g,''), email=$('#pgLoginEmail').value.trim();
+  if(cod.length<6){ $('#pgLoginMsg').textContent='Digite o código que chegou no e-mail.'; return; }
+  $('#pgLoginMsg').textContent='Conferindo…';
+  try{ await confirmarCodigoEmail(email, cod); $('#pgLoginMsg').textContent=''; }catch(e){ $('#pgLoginMsg').textContent=e.message; }
+});
+$('#pgCodigo').addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); $('#pgCodigoOk').click(); } });
+$('#pgSair').addEventListener('click', ()=>{ sairConta(); if(PG.jaPago && !entregaConfirmada){ PG.pedido=null; PG.jaPago=false; PG.modo=pixApi()?'pix':'demo'; pgConfigurar(); } });
 async function pgChamar(rota, corpo){
-  const r=await fetch(pixApi()+rota, corpo?{method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(corpo)}:{});
+  const h={}, t=await contaToken(); if(t) h.authorization='Bearer '+t;
+  if(corpo) h['content-type']='application/json';
+  const r=await fetch(pixApi()+rota, corpo?{method:'POST', headers:h, body:JSON.stringify(corpo)}:{headers:h});
   let j=null; try{ j=await r.json(); }catch(e){}
   if(!r.ok || !j || j.ok===false) throw new Error((j&&j.motivo)||'O serviço de pagamento não respondeu.');
   return j;
 }
 async function pgGerarPix(){
-  const email=$('#pgEmail').value.trim();
-  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ $('#pgGerarMsg').textContent='Informe um e-mail válido.'; $('#pgEmail').focus(); return; }
-  try{ localStorage.setItem('plantare_email', email); }catch(e){}
+  if(!contaLogada()){ pgContaTela(); $('#pgGoogle').focus(); return; }
+  const email=contaEmail();
   if(PG.cortesia) return pgConfirmarCortesia(email);
   $('#pgGerar').disabled=true; $('#pgGerarMsg').textContent='Gerando o Pix…';
   try{
-    const r=await pgChamar('/cobranca', {plano:PG.id, polys:E.polysLL, camadas:PG.camadas, email, cupom:PG.cupom||undefined});
+    const r=await pgChamar('/cobranca', {plano:PG.id, polys:E.polysLL, camadas:PG.camadas, cupom:PG.cupom||undefined});
     PG.pedido=r.id; PG.preco=r.preco; pgMostrarTotal();
     $('#pgEmailBox').hidden=true; $('#pgPix').hidden=false; $('#pgQr').hidden=false; document.querySelector('#pgPix .copia').hidden=false;
     PG.valor=r.valor; PG.qrPronto=false; pgMostrarQr(r);
@@ -9757,7 +9634,7 @@ function pgEsperar(ate){
     if(!$('#pagamento').open || !PG.pedido) return;
     try{
       const s=await pgChamar('/status/'+encodeURIComponent(PG.pedido));
-      if(s.pago){ pagoGuardar(PG.id, s.camadas&&s.camadas.length?s.camadas:PG.camadas, PG.pedido); $('#pgEspera').hidden=true; PG.modo='pago'; pagamentoConfirmado(); return; }
+      if(s.pago){ if(CONTA.compras) CONTA.compras.unshift({id:s.id, area_hash:s.area, camadas:s.camadas||PG.camadas, plano:s.plano}); $('#pgEspera').hidden=true; PG.modo='pago'; pagamentoConfirmado(); return; }
       if(s.encerrado){ $('#pgEspera').hidden=true; $('#pgPixNota').textContent='Este Pix não foi concluído ('+s.status+'). Feche e gere outro para baixar.'; return; }
       if(!PG.qrPronto && (s.qr_code||s.qr_code_base64)){ pgMostrarQr(s); if(s.expira) ate=Date.parse(s.expira); }
     }catch(e){ /* rede instável: tenta de novo */ }
@@ -9783,16 +9660,17 @@ $('#pgAceite').addEventListener('change',e=>{
 /* Cupom de cortesia (conferido no Worker): sem Pix. Pede o e-mail, o Worker manda o recibo e o download sai. */
 function pgCortesia(){
   pgPararEspera(); PG.modo='gratis'; PG.cortesia=true; PG.pedido=null; pgMostrarTotal();
-  $('#pgPix').hidden=true; $('#pgEmailBox').hidden=false;
+  $('#pgPix').hidden=true;
   document.querySelector('#pgDetalhes .cupom').hidden=true; $('label[for="pgCupom"]').hidden=true;
   $('#pgGerar').textContent='Baixar os arquivos'; $('#pgGerar').disabled=false; $('#pgGerarMsg').textContent='';
-  $('#pgCupomMsg').textContent='Cupom de cortesia aplicado: informe seu e-mail para receber o recibo.';
-  $('#pgEmail').focus();
+  $('#pgCupomMsg').textContent='Cupom de cortesia aplicado: o recibo vai para o e-mail da sua conta.';
+  pgContaTela(); (contaLogada()?$('#pgGerar'):$('#pgGoogle')).focus();
 }
 async function pgConfirmarCortesia(email){
   $('#pgGerar').disabled=true; $('#pgGerarMsg').textContent='Liberando…';
   try{
-    const r=await pgChamar('/cortesia', {plano:PG.id, polys:E.polysLL, camadas:PG.camadas, email, cupom:PG.cupom});
+    const r=await pgChamar('/cortesia', {plano:PG.id, polys:E.polysLL, camadas:PG.camadas, cupom:PG.cupom});
+    PG.pedido=r.id; if(CONTA.compras) CONTA.compras.unshift({id:r.id, area_hash:AREA_HASH.valor, camadas:r.camadas, plano:r.plano});
     $('#pgGerarMsg').textContent=r.recibo?'Recibo enviado para '+email+'.':'';
     pagamentoConfirmado();
   }catch(e){ $('#pgGerarMsg').textContent=e.message; $('#pgGerar').disabled=false; }
@@ -9801,6 +9679,7 @@ $('#pgAplicar').addEventListener('click',async()=>{
   const c=$('#pgCupom').value.trim();
   if(!c){ $('#pgCupomMsg').textContent='Digite o código do cupom.'; return; }
   if(PG.modo!=='pix'){ $('#pgCupomMsg').textContent='Cupons valem só no pagamento real.'; return; }
+  if(!contaLogada()){ $('#pgCupomMsg').textContent='Entre na sua conta para usar o cupom (ele vale uma vez por conta).'; pgContaTela(); return; }
   $('#pgCupomMsg').textContent='Conferindo…';
   try{ const r=await pgChamar('/preco',{polys:E.polysLL, camadas:PG.camadas, cupom:c});
     if(r.cupom && r.cupom.valido && r.cupom.gratis && !r.preco.total){ PG.cupom=c; PG.preco=r.preco; pgCortesia(); }
@@ -11824,20 +11703,7 @@ for(const id of ['hero','painel','player']) acessoFluxo.observe($('#'+id),{attri
 $('#painel').inert=true; $('#player').inert=true;
 
 /* Formatos de saída: todos usam o percurso atual, inclusive correções manuais. */
-function passesExportacao(){
-  return passAttrs(E.plano.legs.map((l,i)=>({pts:l.p,tipo:l.tipo,ordem:i+1,num:l.num||0})));
-}
-function geojsonDoPlano(){
-  const fs=[];
-  for(const p of E.polysLL) fs.push({type:'Feature',properties:{tipo:'talhao',nome:E.arquivo},geometry:{type:'Polygon',coordinates:[p.outer,...(p.holes||[])]}});
-  E.plano.legs.forEach((l,i)=>fs.push({type:'Feature',properties:{ordem:i+1,tipo:l.tipo,aplicando:l.t==='w',linha:l.num||0,comprimento_m:+plen(l.p).toFixed(2)},geometry:{type:'LineString',coordinates:linhaLL(l.p)}}));
-  return {type:'FeatureCollection',name:E.arquivo,features:fs};
-}
-function csvDoPlano(){
-  const linhas=['ordem;tipo;linha;aplicando;comprimento_m;rumo_graus'];
-  passesExportacao().forEach((p,i)=>linhas.push([p.ordem,p.tipo,p.num,E.plano.legs[i].t==='w'?'sim':'nao',p.L.toFixed(2).replace('.',','),p.rumo.toFixed(2).replace('.',',')].join(';')));
-  return '\uFEFF'+linhas.join('\r\n');
-}
+/* GeoJSON e CSV são camadas pagas: saem do servidor junto com KML/KMZ/SHP (pix-worker/src/exportar.js). */
 async function pngDoPlano(){
   const svg=mapaRelatorio();
   const view=svg.match(/viewBox="([^"]+)"/)[1].split(' ').map(Number), w=1520, h=Math.round(view[3]*2);
@@ -11905,28 +11771,38 @@ function pdfDoPlano(){
 }
 
 let exportando=false;
+const FORMATOS_PAGOS=['kml','kmz','ab','rota','shp','geojson','csv'];
+/* o que o servidor precisa para montar os arquivos pagos: o talhão (confere com a compra) e o percurso */
+function entradaServidor(nome, perfil){
+  const fm={}; for(const k of FORMATOS_PAGOS) fm[k]=!!E.sel[k];
+  return {nome, crs:{zone:E.crs.zone, south:!!E.crs.south, kind:E.crs.kind}, polys:E.polysLL,
+    legs:E.plano.legs.map(l=>({t:l.t, tipo:l.tipo, num:l.num||0, p:l.p})), obstaculos:(E.campo&&E.campo.obst)||[], formatos:fm,
+    shp:{camadas:Object.assign({},E.shpCamadas), partes:Object.assign({},E.shpPartes), sistemas:Object.assign({},E.shpSistemas)},
+    campos:perfil?perfil.campos||null:null};
+}
+const deB64=b=>{ const s=atob(b), u=new Uint8Array(s.length); for(let i=0;i<s.length;i++) u[i]=s.charCodeAt(i); return u; };
 async function montarSelecionados(){
   if(!E.plano)throw new Error('Gere um plano antes de exportar.');
   const n=nomeBase(), enc=new TextEncoder(), files=[];
   const add=(name,data)=>files.push({name,data:typeof data==='string'?enc.encode(data):data});
   const perfil=typeof perfilMonitor==='function'?perfilMonitor():null;
-  const pk=await CALC.rodar('pacote', Object.assign(dadosBase(),{nome:n, legs:E.plano.legs, pdf:dadosDoRelatorio(),
-    shp:{camadas:Object.assign({},E.shpCamadas), partes:Object.assign({},E.shpPartes), sistemas:Object.assign({},E.shpSistemas)},
-    pasta:'', campos:perfil?perfil.campos||null:null, perfil:perfil?perfil.marca+' '+(E.monitor.modelo||''):''}));
-  // os arquivos vêm prontos do núcleo, já costurados e com as camadas separadas
-  const querArquivo=nome=>{
-    if(nome.startsWith('shapefile/')) return !!E.sel.shp;
-    if(nome.endsWith('_ab.kml')||nome.endsWith('_ab.kmz')) return !!E.sel.ab;
-    if(nome.indexOf('_rota.')>=0) return !!E.sel.rota;
-    if(nome.endsWith('_relatorio.pdf')) return !!E.sel.pdf;
-    if(nome.endsWith('.kmz')) return !!E.sel.kmz;
-    if(nome.endsWith('.kml')) return !!E.sel.kml;
-    return false;
-  };
-  for(const f of (pk.arquivos||[])) if(querArquivo(f.name)) files.push(f);
+  // grátis, aqui mesmo: relatório PDF
+  if(E.sel.pdf){
+    const pk=await CALC.rodar('pacote', Object.assign(dadosBase(),{nome:n, legs:E.plano.legs, pdf:dadosDoRelatorio()}));
+    for(const f of (pk.arquivos||[])) files.push(f);
+  }
+  // pagos: só o servidor gera, para a compra desta conta
+  const pagos=FORMATOS_PAGOS.filter(k=>E.sel[k]);
+  if(pagos.length){
+    if(!PG.pedido){
+      if(PG.modo!=='demo') throw new Error('Os mapas para o monitor saem depois do pagamento.');
+    }else{
+      const r=await pgChamar('/pacote', {pedido:PG.pedido, entrada:entradaServidor(n, perfil)});
+      for(const a of r.arquivos) files.push({name:a.name, data:deB64(a.b64)});
+      if(r.negados && r.negados.length) aviso('Alguns formatos não entraram: a compra não cobre as camadas deles ('+r.negados.join(', ')+').');
+    }
+  }
   if(E.sel.json) add(n+'_projeto.json', JSON.stringify(estadoSalvo()));
-  if(E.sel.geojson) add(n+'.geojson', JSON.stringify(geojsonDoPlano()));
-  if(E.sel.csv) add(n+'.csv', csvDoPlano());
   if(E.sel.png) add(n+'_mapa.png', new Uint8Array(await (await pngDoPlano()).arrayBuffer()));
   if(!files.length) throw new Error('Selecione ao menos um formato disponível.');
   const pasta=(perfil&&perfil.pasta||'').replace(/^\/+|\/+$/g,'');

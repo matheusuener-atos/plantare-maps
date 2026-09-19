@@ -14,9 +14,12 @@ routes = [
 # "null" libera o app aberto como arquivo local (file://) — use só em teste.
 ORIGENS = "https://plantaremaps.com.br,https://www.plantaremaps.com.br,https://plantare.matheusuener.com.br"
 
-# Cupons ficam num SEGREDO (o repositório é público):
-#   npx wrangler secret put CUPONS   → cole, por exemplo: {"CAMPO10":0.10,"CODIGO":{"fixo":2}}
-#   0.10 = 10% de desconto · {"fixo":2} = a compra sai por R$ 2,00 · {"gratis":true} = cortesia (baixa sem Pix)
+# Banco e login (Supabase). A URL e a chave publicável não são segredo: a publicável também vai no app.
+SUPABASE_URL = "https://yhzyfcdfpezgtnrrslqv.supabase.co"
+SUPABASE_PUBLISHABLE_KEY = "sb_publishable_avQLpdS9TwtNE9PKu-1E5w_xLI7OzR5"
+# Cupons agora ficam na tabela "cupons" do Supabase (um uso por conta). O segredo CUPONS antigo não é mais lido.
+# Por quantos dias uma compra paga pode ser baixada de novo (mesmo talhão, mesmas camadas). 0 = sem limite.
+REBAIXAR_DIAS = "365"
 # Remetente dos e-mails de cortesia (domínio precisa estar no Email Sending da Cloudflare)
 EMAIL_DE = "nao-responda@plantaremaps.com.br"
 # Validade do Pix (ISO 8601)
@@ -27,6 +30,10 @@ EXPIRA = "PT30M"
 #   npx wrangler secret put MP_ACCESS_TOKEN      ← Access Token de produção do Mercado Pago
 #   npx wrangler secret put MP_WEBHOOK_SECRET    ← "Assinatura secreta" da tela de Webhooks
 #   npx wrangler secret put AVISO_EMAIL          ← seu e-mail: recebe a cópia de cada cortesia usada
+#   npx wrangler secret put SUPABASE_SERVICE_KEY ← Supabase › Project Settings › API Keys › Secret key (sb_secret_…)
+
+# Gerar os arquivos leva de 40 ms (talhão pequeno) a ~300 ms de CPU (575 ha).
+# O plano grátis do Workers corta em 10 ms: este serviço precisa do Workers Paid (limite padrão 30 s).
 
 # Envio de e-mail (Cloudflare Email Service). Destinatário qualquer exige o plano Workers Paid;
 # no plano grátis só chega em endereços verificados da conta (a cópia para AVISO_EMAIL).
