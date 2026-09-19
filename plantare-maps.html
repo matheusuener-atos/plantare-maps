@@ -1266,7 +1266,7 @@ dialog.gp{width:min(860px,94vw)}
 
 <div class="ux-project" id="uxProject" hidden>
   <div class="ux-overline">SEU TALHÃO <span class="ux-dot"></span></div>
-  <strong id="uxFieldName"></strong>
+  <strong id="uxFieldName" tabindex="0" role="button" aria-label="Nome do talhão (clique para renomear)"></strong>
   <div class="ux-field-meta"><span id="uxFieldArea"></span><span id="uxFieldMachine"></span></div>
 </div>
 <div class="ux-dock" id="uxDock" role="toolbar" aria-label="Controles do mapa" hidden>
@@ -8018,7 +8018,7 @@ function etapasHtml(){
 }
 function cabCompacto(){
   const areaHa=(E.campo?E.campo.area:areaBruta())/1e4, ob=E.campo?E.campo.obst.length:0;
-  return '<div class="cab-compacto"><span><b>'+esc(E.arquivo||'Talhão')+'</b> · '+fmt(areaHa,1)+' ha'+(ob?' · '+ob+(ob===1?' obstáculo':' obstáculos'):'')+'</span>'
+  return '<div class="cab-compacto"><span><b title="'+esc(E.arquivo||'Talhão')+'">'+esc(E.arquivo||'Talhão')+'</b><i>&nbsp;· '+fmt(areaHa,1)+' ha'+(ob?' · '+ob+(ob===1?' obstáculo':' obstáculos'):'')+'</i></span>'
     +'<button class="link" type="button" data-acao="detalhes" aria-expanded="'+E.detalhes+'">'+(E.detalhes?'Ocultar':'Detalhes')+'</button></div>'
     +(E.detalhes?'<div class="detalhes">'+blocoTalhao()+'</div>':'');
 }
@@ -11905,7 +11905,7 @@ function uxAtualizar(){
   const busy=fluxoOcupado(),locked=busy||E.vitrine||!MAPA.pronto;
   for(const id of ['uxProject','uxDock','uxProjectActions']) $('#'+id).hidden=!work;
   if(!work){UX_MAPA.focus=false;if(document.body.classList.contains('mapa-livre'))document.body.classList.remove('mapa-livre');$('#uxFocusHint').hidden=true;uxFecharCamadas();}
-  $('#uxFieldName').textContent=E.arquivo||'Seu talhão';
+  if(!$('#uxFieldName input')){ const n=E.arquivo||'Seu talhão'; $('#uxFieldName').textContent=n; $('#uxFieldName').title=E.vitrine?n:n+' · clique para renomear'; }
   $('#uxFieldArea').textContent=E.campo?fmt(E.campo.area/1e4,1)+' ha':'Analisando o contorno…';
   $('#uxFieldMachine').textContent='Barra '+fmtM(E.P.faixa)+' m';
   for(const id of ['uxFrame','uxView','uxLayers']) $('#'+id).disabled=locked;
@@ -12612,7 +12612,7 @@ function crStatus(){
   if(o?.type==='circle')return ['Círculo selecionado','Arraste o centro para mover ou os cantos para redimensionar.'];
   if(o?.type==='drain')return ['Dreno selecionado','Arraste os nós para espichar a linha ou as alças azuis para mudar a curva.'];
   if(o?.type==='polygon')return ['Obstáculo selecionado','Arraste os nós para corrigir o contorno.'];
-  if(crPodeConcluir() && CR.tool!=='dividir')return [CR.tool==='limite'?'Feche o limite.':'Feche o obstáculo.','Toque em ✓ Concluir na barra (ou no primeiro ponto) para fechar. Pode continuar marcando cantos antes.'];
+  if(crPodeConcluir() && CR.tool!=='dividir')return [CR.tool==='limite'?'Feche o limite.':'Feche o obstáculo.','Toque em ✓ Concluir, no primeiro ponto, ou segure no mapa para fechar. Pode continuar marcando cantos antes.'];
   if(!CR.boundary.length)return ['Comece pelo limite do talhão.','Clique nos cantos da área. Toque no primeiro ponto para fechar.'+(CR.ima?' O ímã puxa para os vértices do CAR.':'')];
   if(CR.tool==='circulo')return ['Posicione o obstáculo circular.',CR.draft.length?'Agora clique na borda para definir o tamanho.':'Clique no centro do poste, cocho ou árvore.'];
   if(CR.tool==='dreno')return ['Desenhe o dreno à mão livre.','Pressione, arraste pelo eixo do dreno e solte. A linha será suavizada.'];
@@ -12788,6 +12788,80 @@ dialog.pergunta .acoes .btn{min-height:42px;padding:0 18px;font-size:13.5px}
   <h2 id="perguntaTitulo"></h2><p id="perguntaTexto"></p>
   <div class="acoes"><button type="button" class="btn btn-fio" id="perguntaNao">Cancelar</button><button type="button" class="btn btn-luz" id="perguntaSim">OK</button></div>
 </dialog>
+<style id="nome-gestos">
+/* nome do talhão: reticências e renomear no clique */
+#uxFieldName{pointer-events:auto;cursor:text;max-width:min(100%,560px);border-bottom:1px dashed transparent;transition:border-color .2s}
+#uxFieldName:hover,#uxFieldName:focus-visible{border-bottom-color:rgba(200,243,180,.55);outline:0}
+#uxFieldName:not(:has(input)):hover::after{content:"";display:inline-block;width:.55em;height:.55em;margin-left:.35em;vertical-align:.1em;background:currentColor;opacity:.55;
+  -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 20h4L19 9l-4-4L4 16v4ZM13.5 6.5l4 4'/%3E%3C/svg%3E") center/contain no-repeat;
+  mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 20h4L19 9l-4-4L4 16v4ZM13.5 6.5l4 4'/%3E%3C/svg%3E") center/contain no-repeat}
+#uxFieldName input{font:inherit;letter-spacing:inherit;color:inherit;width:min(520px,calc(100vw - 80px));max-width:100%;padding:0;margin:0;background:transparent;border:0;border-bottom:1px solid #c8f3b4;outline:0;text-shadow:inherit}
+body.espaco #uxFieldName,body.criando #uxFieldName{pointer-events:none!important}
+.cab-compacto>span{display:flex;min-width:0;white-space:nowrap}
+.cab-compacto>span b{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.cab-compacto>span>i{flex:0 0 auto;font-style:normal}
+.cab-arquivo{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* desenho no computador: o zoom sai de trás das dicas da barra de ferramentas */
+@media(min-width:621px){body.criando .maplibregl-ctrl-top-left{top:auto;left:auto;right:28px;bottom:160px}}
+/* segurar para concluir */
+.cr-segurar{position:fixed;z-index:35;width:54px;height:54px;margin:-27px 0 0 -27px;border-radius:50%;pointer-events:none;border:2px solid #bdfaa5;box-shadow:0 0 18px rgba(157,255,122,.45);
+  opacity:0;animation:crSegurar .43s .12s linear forwards}
+@keyframes crSegurar{from{opacity:.15;transform:scale(1.9)}to{opacity:1;transform:scale(.7)}}
+body.arrastando-meio,body.arrastando-meio *{cursor:grabbing!important}
+</style>
+<script data-modulo="nome-gestos">
+"use strict";
+/* renomear o talhão clicando no nome */
+function uxRenomear(){
+  const s=$('#uxFieldName'); if(!E.polysLL||E.vitrine||s.querySelector('input')) return;
+  const velho=E.arquivo||'';
+  const i=document.createElement('input'); i.value=velho; i.maxLength=80; i.spellcheck=false; i.setAttribute('aria-label','Nome do talhão');
+  s.textContent=''; s.appendChild(i); i.focus(); i.select();
+  let feito=false;
+  const fim=ok=>{
+    if(feito) return; feito=true;
+    const n=i.value.replace(/\s+/g,' ').trim().slice(0,80);
+    i.remove();
+    if(ok&&n&&n!==velho){ E.arquivo=n; salvar(); atualizarPainel(); aviso('Talhão renomeado.'); }
+    uxAtualizar();
+  };
+  i.addEventListener('keydown',e=>{ e.stopPropagation(); if(e.key==='Enter'){e.preventDefault();fim(true);} else if(e.key==='Escape'){e.preventDefault();fim(false);} });
+  i.addEventListener('blur',()=>fim(true));
+}
+$('#uxFieldName').addEventListener('click',uxRenomear);
+$('#uxFieldName').addEventListener('keydown',e=>{ if((e.key==='Enter'||e.key===' ')&&e.target===e.currentTarget){ e.preventDefault(); uxRenomear(); } });
+
+/* desenho: clicar e segurar no mapa conclui o contorno (com 3 pontos ou mais) */
+(function(){
+  let t=null, x0=0, y0=0, anel=null, segurou=false;
+  const limpa=()=>{ clearTimeout(t); t=null; if(anel){ anel.remove(); anel=null; } };
+  document.addEventListener('pointerdown',e=>{
+    if(t && !e.isPrimary){ limpa(); return; }                       // segundo dedo: é pinça, não é segurar
+    if(!CR.ativo||!(CR.tool==='limite'||CR.tool==='poligono')||CR.draft.length<3) return;
+    if(!e.isPrimary||e.button!==0||!MAPA.map||!MAPA.map.getCanvasContainer().contains(e.target)) return;
+    x0=e.clientX; y0=e.clientY; segurou=false;
+    anel=document.createElement('div'); anel.className='cr-segurar'; anel.style.left=x0+'px'; anel.style.top=y0+'px'; document.body.appendChild(anel);
+    t=setTimeout(()=>{ limpa(); segurou=true; CR.justDrew=performance.now()+6e4; crFecharRascunho(); try{ navigator.vibrate&&navigator.vibrate(25); }catch(_){} },550);
+  },true);
+  document.addEventListener('pointermove',e=>{ if(t&&Math.hypot(e.clientX-x0,e.clientY-y0)>9) limpa(); },true);
+  const solta=()=>{ limpa(); if(segurou){ segurou=false; CR.justDrew=performance.now(); } };   // o clique que vem ao soltar não vira ponto novo
+  document.addEventListener('pointerup',solta,true);
+  document.addEventListener('pointercancel',solta,true);
+})();
+
+/* computador: arrastar o mapa com o botão do meio (a rodinha) */
+(function(){
+  document.addEventListener('mousedown',e=>{
+    if(e.button!==1||!MAPA.map||!MAPA.map.getCanvasContainer().contains(e.target)||!MAPA.map.dragPan.isEnabled()) return;
+    e.preventDefault();                                              // sem a rolagem automática do navegador
+    let x=e.clientX, y=e.clientY; document.body.classList.add('arrastando-meio');
+    const mv=ev=>{ const dx=ev.clientX-x, dy=ev.clientY-y; if(dx||dy) MAPA.map.panBy([-dx,-dy],{duration:0}); x=ev.clientX; y=ev.clientY; };
+    const up=ev=>{ if(ev.button!==1) return; removeEventListener('mousemove',mv,true); removeEventListener('mouseup',up,true); document.body.classList.remove('arrastando-meio'); };
+    addEventListener('mousemove',mv,true); addEventListener('mouseup',up,true);
+  },true);
+  document.addEventListener('auxclick',e=>{ if(e.button===1&&MAPA.map&&MAPA.map.getCanvasContainer().contains(e.target)) e.preventDefault(); },true);
+})();
+</script>
 <script data-modulo="pergunta">
 "use strict";
 /* perguntar({titulo, texto, sim, nao, rotulo}) → Promise<boolean>. Janela no vidro do sistema. */
