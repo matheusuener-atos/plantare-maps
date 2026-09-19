@@ -12763,6 +12763,15 @@ MAPA.carregado.then(()=>{prepararCamadasFerramentas();prepararCriadorMapa();});
   setTimeout(()=>{ if(!MAPA.pronto) $('#veu').style.opacity=0; }, 4000);
 }
 </script>
+<style id="hero-desenhar">
+/* "Desenhar no mapa": mesma caixa do "Importar arquivo", em vidro contornado, com ícone de polígono */
+.hero #btDesenhar{min-width:204px;min-height:53px;padding:0 21px;justify-content:space-between;gap:35px;font-size:14px;color:#eaffde;
+  border:1px solid #d0f6b95c;border-radius:3px;background:rgba(210,248,211,.07);box-shadow:inset 0 1px 0 #ffffff0d;
+  backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px)}
+.hero #btDesenhar::after{content:'';width:20px;height:20px;flex:none;background:no-repeat center/20px url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23eaffde' stroke-width='1.5' stroke-linejoin='round'%3E%3Cpath d='M4 17 7 5l10 2 2 10-10 2z'/%3E%3Ccircle cx='4' cy='17' r='1.6' fill='%23eaffde'/%3E%3Ccircle cx='7' cy='5' r='1.6' fill='%23eaffde'/%3E%3Ccircle cx='17' cy='7' r='1.6' fill='%23eaffde'/%3E%3C/svg%3E")}
+.hero #btDesenhar:hover:not(:disabled){border-color:#e6ffdca6;background:rgba(210,248,211,.13);transform:translateY(-1px)}
+@media(max-width:620px){.hero #btDesenhar{min-height:50px}}
+</style>
 <style id="conta-ui">
 /* ---- conta: miniatura no canto, card de entrar/cadastro/menu/extrato, talhões no mapa ----
    Mesmo vidro dos painéis; nada de tela cheia: o card cobre só parte da cena animada. */
