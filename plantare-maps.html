@@ -9600,6 +9600,11 @@ async function pgGerarPix(){
   if(!contaLogada()){ pgContaTela(); $('#pgGoogle').focus(); return; }
   const email=contaEmail();
   if(PG.cortesia) return pgConfirmarCortesia(email);
+  // compra paga pede o cadastro (vai na nota fiscal); a cortesia não
+  $('#pgGerar').disabled=true; $('#pgGerarMsg').textContent='Conferindo seu cadastro…';
+  let perfil=null; try{ perfil=await contaPerfil(); }catch(e){ /* sem resposta: pede o cadastro */ }
+  if(!perfil){ $('#pgGerar').disabled=false; $('#pgGerarMsg').textContent='Complete seu cadastro para gerar o Pix: os dados vão na nota fiscal.'; contaAbrir('cadastro',{modal:true}); return; }
+  contaSalvarTalhaoAgora().catch(()=>{});   // o talhão pago aparece em "Meus talhões" e no extrato
   $('#pgGerar').disabled=true; $('#pgGerarMsg').textContent='Gerando o Pix…';
   try{
     const r=await pgChamar('/cobranca', {plano:PG.id, polys:E.polysLL, camadas:PG.camadas, cupom:PG.cupom||undefined});
@@ -9669,6 +9674,7 @@ function pgCortesia(){
 async function pgConfirmarCortesia(email){
   $('#pgGerar').disabled=true; $('#pgGerarMsg').textContent='Liberando…';
   try{
+    contaSalvarTalhaoAgora().catch(()=>{});
     const r=await pgChamar('/cortesia', {plano:PG.id, polys:E.polysLL, camadas:PG.camadas, cupom:PG.cupom});
     PG.pedido=r.id; if(CONTA.compras) CONTA.compras.unshift({id:r.id, area_hash:AREA_HASH.valor, camadas:r.camadas, plano:r.plano});
     $('#pgGerarMsg').textContent=r.recibo?'Recibo enviado para '+email+'.':'';
@@ -9921,7 +9927,8 @@ function estadoSalvo(){
     escolha:E.escolha?{id:E.escolha.id, rumo:E.escolha.rumo, titulo:E.escolha.titulo}:null, crDesenho:E.crDesenho||null,
     abastecimento:E.abastLL, abastSugerido:E.abastSugerido, padrao:E.padrao, correcoes:E.correcoes, fim:E.fim, obstManuais:E.obstManuais||[], apoio:E.apoio||null, ab:E.ab||null, pastaNome:E.pastaNome||''};
 }
-function salvar(){ if(!E.kml) return; const e=estadoSalvo(); if(!GUARDA.gravar(PROJ_CHAVE, JSON.stringify(e))) aviso('Não foi possível salvar neste navegador. Baixe o projeto para guardar seus ajustes.'); }
+function salvar(){ if(!E.kml) return; const e=estadoSalvo(); if(!GUARDA.gravar(PROJ_CHAVE, JSON.stringify(e))) aviso('Não foi possível salvar neste navegador. Baixe o projeto para guardar seus ajustes.');
+  if(typeof contaTalhaoAgendar==='function') contaTalhaoAgendar(); }   // com conta: guarda também em "Meus talhões"
 let pacoteCache=null;
 function dadosDoRelatorio(){
   const m=E.plano.medida, cb=E.plano.cobertura, P=E.P, area=E.campo.area/1e4;
@@ -12633,6 +12640,559 @@ MAPA.carregado.then(()=>{prepararCamadasFerramentas();prepararCriadorMapa();});
   setTimeout(()=>{ if(!MAPA.pronto) $('#veu').style.opacity=0; }, 4000);
 }
 </script>
+<style id="conta-ui">
+/* ---- conta: miniatura no canto, card de entrar/cadastro/menu/extrato, talhões no mapa ----
+   Mesmo vidro dos painéis; nada de tela cheia: o card cobre só parte da cena animada. */
+.conta-av{position:fixed;top:24px;right:40px;z-index:30;width:36px;height:36px;border-radius:50%;display:grid;place-items:center;
+  border:1px solid var(--surface-edge,rgba(225,248,231,.32));background:rgba(19,39,29,.42);color:#dcebd3;
+  box-shadow:inset 0 1px 0 rgba(245,255,248,.16);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);transition:border-color .2s,background .2s,opacity .4s}
+.conta-av:hover,.conta-av[aria-expanded=true]{border-color:rgba(218,250,199,.6);background:rgba(204,246,179,.14)}
+.conta-av svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.4;stroke-linecap:round}
+.conta-av b{font:600 12px/1 var(--f-num);letter-spacing:.04em;color:#eaffdf}
+.conta-av.logado{border-color:rgba(91,227,138,.55)}
+body.espaco .conta-av{opacity:0;pointer-events:none}
+body.conta-aberta .legenda{opacity:0;pointer-events:none}
+/* o canto direito abre espaço para a miniatura */
+.legenda{right:92px}
+.ux-project-actions{right:96px}
+
+dialog.conta-card{position:fixed;z-index:40;inset:74px 40px auto auto;margin:0;width:min(392px,calc(100vw - 32px));max-height:calc(100dvh - 98px);overflow:auto;
+  padding:22px 22px 20px;color:var(--palha);background:rgba(19,39,29,.42);border:1px solid rgba(227,249,232,.38);border-radius:8px;
+  box-shadow:inset 0 1px 0 rgba(245,255,248,.16),0 12px 35px rgba(0,12,5,.14);backdrop-filter:blur(18px) saturate(110%);-webkit-backdrop-filter:blur(18px) saturate(110%)}
+dialog.conta-card.largo{width:min(520px,calc(100vw - 32px))}
+dialog.conta-card::backdrop{background:rgba(0,0,0,.35)}
+dialog.conta-card:not([open]){display:none}
+.conta-card .ux-overline{margin-bottom:10px}
+.conta-card h2{font-family:var(--f-titulo);font-weight:450;font-size:25px;line-height:1.1;letter-spacing:-.01em;margin:0 0 8px}
+.conta-card .nota{margin:0 0 14px}
+.conta-card .fechar{position:absolute;top:12px;right:12px;width:30px;height:30px;border-radius:50%;color:#cfe0c6;font-size:18px;line-height:1}
+.conta-card .fechar:hover{color:#fff;background:rgba(255,255,255,.06)}
+.conta-card .voltar{font:10px var(--f-num);letter-spacing:.14em;color:#c3d6b5;margin-bottom:12px;display:inline-flex;gap:6px}
+.conta-card .voltar:hover{color:#eaffdf}
+.conta-card .pg-login{margin-top:4px}
+.conta-card .cupom{display:flex;gap:8px}
+.conta-card .cupom input{text-transform:none;letter-spacing:normal;flex:1;min-width:0;min-height:42px;background:#e1ffdd07;border:0;border-bottom:1px solid var(--fio2);color:#EEF5ED;padding:0 4px;font:13px var(--f-texto)}
+.conta-form{display:grid;grid-template-columns:repeat(6,1fr);gap:12px 12px;margin-top:6px}
+.conta-form .campo{grid-column:span 6}
+.conta-form .c3{grid-column:span 3}.conta-form .c1{grid-column:span 1}
+.conta-card form{padding:0}.conta-form .c2{grid-column:span 2}.conta-form .c4{grid-column:span 4}
+.conta-form .campo input{width:100%;min-width:0}
+.conta-form .erro input{border-bottom-color:#ff8a7a}
+.conta-acoes{display:flex;gap:10px;align-items:center;justify-content:space-between;margin-top:18px}
+.conta-acoes .btn{min-height:42px}
+.conta-lgpd{font-size:11px;color:var(--poeira2,#9CAE9F);margin-top:12px;line-height:1.5}
+/* menu */
+.conta-quem{display:grid;grid-template-columns:auto 1fr;gap:14px;align-items:center;padding-bottom:16px;border-bottom:1px solid var(--fio)}
+.conta-quem .av{width:46px;height:46px;border-radius:50%;display:grid;place-items:center;border:1px solid rgba(91,227,138,.55);font:600 16px var(--f-num);color:#eaffdf;background:rgba(204,246,179,.08)}
+.conta-quem strong{display:block;font-family:var(--f-titulo);font-size:18px;font-weight:600}
+.conta-quem span{font:11px var(--f-num);color:var(--poeira);word-break:break-all}
+.conta-menu{display:flex;flex-direction:column;margin-top:8px}
+.conta-menu button{display:grid;grid-template-columns:22px 1fr auto;gap:12px;align-items:center;text-align:left;padding:13px 2px;border-bottom:1px solid var(--fio);font-size:14px;color:#e5efe1}
+.conta-menu button:last-child{border-bottom:0;color:#cfe0c6}
+.conta-menu button:hover{color:#fff}
+.conta-menu svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round;opacity:.85}
+.conta-menu em{font:normal 11px var(--f-num);color:var(--poeira)}
+/* extrato */
+.extrato{margin-top:6px;border-top:1px solid var(--fio)}
+.extrato-lin{border-bottom:1px solid var(--fio)}
+.extrato-lin>button{display:grid;grid-template-columns:72px 1fr auto 14px;gap:12px;align-items:center;width:100%;text-align:left;padding:13px 2px;font-size:13.5px;color:#e5efe1}
+.extrato-lin>button:hover{color:#fff}
+.extrato-lin time{font:11px var(--f-num);color:var(--poeira)}
+.extrato-lin strong{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.extrato-lin b{font:500 13px var(--f-num);color:#eaffdf}
+.extrato-lin i{width:8px;height:8px;border-right:1.3px solid #cfe0c6;border-bottom:1.3px solid #cfe0c6;transform:rotate(45deg);transition:transform .25s;justify-self:end;margin-top:-4px}
+.extrato-lin.aberto i{transform:rotate(225deg);margin-top:4px}
+.extrato-det{display:none;padding:2px 2px 16px 84px}
+.extrato-lin.aberto .extrato-det{display:block}
+:root.anima .extrato-lin.aberto .extrato-det{animation:entraPlayer .3s cubic-bezier(.2,.7,.2,1) both}
+.extrato-det dl{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;margin:0 0 12px;font-size:12.5px}
+.extrato-det dt{font:10px var(--f-num);letter-spacing:.1em;color:var(--poeira);text-transform:uppercase;padding-top:2px}
+.extrato-det dd{margin:0;color:#e5efe1}
+.extrato-det .btn{min-height:38px;font-size:13px;padding:0 16px}
+.conta-vazio{padding:22px 2px;font-size:13px;color:var(--poeira)}
+/* talhões: coluna à direita e pins "farol" no mapa */
+.conta-coluna{position:fixed;top:100px;right:24px;bottom:24px;width:min(360px,calc(100vw - 32px));z-index:14;display:flex;flex-direction:column;
+  background:rgba(19,39,29,.30);border:1px solid rgba(225,248,231,.32);border-radius:8px;box-shadow:inset 0 1px 0 rgba(245,255,248,.16),0 12px 35px rgba(0,12,5,.14);
+  backdrop-filter:blur(18px) saturate(110%);-webkit-backdrop-filter:blur(18px) saturate(110%)}
+.conta-coluna[hidden]{display:none}
+:root.anima .conta-coluna:not([hidden]){animation:entraPlayer .4s cubic-bezier(.2,.7,.2,1) both}
+.conta-coluna header{padding:20px 20px 14px;border-bottom:1px solid var(--fio)}
+.conta-coluna h2{font-family:var(--f-titulo);font-weight:450;font-size:25px;margin:8px 0 2px}
+.conta-coluna header p{font-size:12px;color:var(--poeira);margin:0}
+.conta-coluna .fechar{position:absolute;top:14px;right:14px;width:30px;height:30px;border-radius:50%;color:#cfe0c6;font-size:18px}
+.conta-coluna .fechar:hover{color:#fff;background:rgba(255,255,255,.06)}
+.conta-coluna ol{list-style:none;margin:0;padding:0 20px 16px;overflow:auto;flex:1;min-height:0}
+.conta-tal{border-bottom:1px solid var(--fio)}
+.conta-tal>button{display:grid;grid-template-columns:1fr auto;gap:3px 12px;width:100%;text-align:left;padding:14px 2px}
+.conta-tal>button strong{font-size:14.5px;font-weight:500;color:#eef5ed}
+.conta-tal>button span{grid-column:1/-1;font:10.5px var(--f-num);color:var(--poeira);letter-spacing:.02em}
+.conta-tal>button em{font:normal 11px var(--f-num);color:#c3d6b5;align-self:center}
+.conta-tal.ativo>button strong{color:var(--luz)}
+.conta-tal .det{display:none;padding:0 2px 16px}
+.conta-tal.ativo .det{display:block}
+.conta-tal .det .acoes{display:flex;gap:8px;flex-wrap:wrap}
+.conta-tal .det .btn{min-height:38px;font-size:13px;padding:0 16px}
+.conta-barra{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:14;display:flex;align-items:center;gap:18px;padding:14px 16px 14px 20px;
+  width:max-content;max-width:calc(100vw - 32px);background:rgba(19,39,29,.42);border:1px solid rgba(227,249,232,.38);border-radius:8px;
+  box-shadow:inset 0 1px 0 rgba(245,255,248,.16),0 12px 35px rgba(0,12,5,.14);backdrop-filter:blur(18px) saturate(110%);-webkit-backdrop-filter:blur(18px) saturate(110%)}
+.conta-barra[hidden]{display:none}
+.conta-barra strong{display:block;font-family:var(--f-titulo);font-size:18px;font-weight:600}
+.conta-barra span{font:10.5px var(--f-num);color:var(--poeira)}
+.conta-barra .btn{min-height:40px}
+body.conta-mapa #hero,body.conta-mapa .ux-home-caption,body.conta-mapa .cena-ctl,body.conta-mapa .legenda{opacity:0;pointer-events:none}
+.conta-pin{position:relative;width:18px;height:18px;cursor:pointer}
+.conta-pin s{position:absolute;left:50%;bottom:50%;width:2px;height:70px;transform:translateX(-50%);background:linear-gradient(to top,rgba(91,227,138,.95),rgba(91,227,138,0));pointer-events:none}
+.conta-pin b{position:absolute;inset:4px;border-radius:50%;background:#5BE38A;box-shadow:0 0 14px #5BE38A,0 0 3px #eaffdf}
+.conta-pin i{position:absolute;inset:0;border-radius:50%;border:1.5px solid #5BE38A;opacity:0}
+:root.anima .conta-pin i{animation:contaPulso 2.6s ease-out infinite}
+:root.anima .conta-pin i+i{animation-delay:1.3s}
+@keyframes contaPulso{0%{transform:scale(.6);opacity:.9}100%{transform:scale(3.4);opacity:0}}
+.conta-pin span{position:absolute;left:22px;top:0;white-space:nowrap;font:600 12px var(--f-texto);color:#f1fbeb;text-shadow:0 1px 8px #000,0 0 2px #000}
+.conta-pin.ativo b{background:#eaffdf}
+@media(max-width:760px){
+  .conta-av{top:18px;right:16px;width:34px;height:34px}
+  body.conta-aberta #hero,body.conta-aberta .cena-ctl,body.conta-aberta .ux-home-caption{opacity:0;pointer-events:none}
+  body.conta-aberta #hero,body.conta-aberta .cena-ctl,body.conta-aberta .ux-home-caption{opacity:0;pointer-events:none}
+  .legenda{right:62px}.ux-project-actions{right:62px}
+  dialog.conta-card{inset:62px 10px auto 10px;width:auto;max-height:calc(100dvh - 76px)}
+  dialog.conta-card.largo{width:auto}
+  .extrato-lin>button{grid-template-columns:62px 1fr auto 12px;gap:8px}.extrato-det{padding-left:0}
+  .conta-coluna{top:auto;left:10px;right:10px;bottom:10px;width:auto;max-height:46dvh}
+  .conta-barra{bottom:16px;gap:12px;flex-wrap:wrap}
+}
+</style>
+
+<button type="button" class="conta-av" id="contaAv" aria-haspopup="dialog" aria-expanded="false" aria-controls="contaCard" aria-label="Entrar na sua conta">
+  <svg viewBox="0 0 24 24" id="contaAvIcone"><circle cx="12" cy="8.5" r="3.6"/><path d="M4.8 19.5c1.4-3.3 4-5 7.2-5s5.8 1.7 7.2 5"/></svg><b id="contaAvIniciais" hidden></b>
+</button>
+<dialog class="conta-card" id="contaCard" aria-label="Sua conta"><div id="contaCorpo"></div></dialog>
+<aside class="conta-coluna" id="contaColuna" hidden aria-label="Meus talhões">
+  <button class="fechar" type="button" id="contaColunaFechar" aria-label="Fechar meus talhões">×</button>
+  <header><div class="ux-overline">MEUS TALHÕES <span class="ux-dot"></span></div><h2>No mapa.</h2><p id="contaColunaSub"></p></header>
+  <ol id="contaColunaLista"></ol>
+</aside>
+<div class="conta-barra" id="contaBarra" hidden role="group" aria-label="Talhão no mapa">
+  <div><strong id="contaBarraNome"></strong><span id="contaBarraMeta"></span></div>
+  <button type="button" class="btn btn-luz" id="contaBarraReeditar">Reeditar</button>
+  <button type="button" class="btn btn-fio" id="contaBarraFechar">Fechar</button>
+</div>
+
+<script data-modulo="conta-ui">
+"use strict";
+/* =====================================================================
+   Conta na tela: miniatura no canto → card (entrar, cadastro, menu, extrato);
+   "Meus talhões" e "Exibir" levam o mapa até os talhões da conta.
+   Dados direto no Supabase com o login da pessoa (RLS: cada conta só vê o que é dela):
+     perfis (cadastro para a nota fiscal), talhoes (resumo + divisa), compras (leitura),
+     Storage projetos/<conta>/<talhão>.json.gz (o projeto inteiro, para reeditar).
+   ===================================================================== */
+const CX={perfil:undefined, talhoes:null, compras:null, tela:null, modal:false, mapa:false, pins:[], foco:null, salvarT:0, ultimo:'', volta:null};
+const contaUid=()=>{ const t=CONTA.sessao&&CONTA.sessao.access_token; return t?jwtDados(t).sub||null:null; };
+async function sha256hex(txt){ const d=new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(txt))); return [...d].map(b=>b.toString(16).padStart(2,'0')).join(''); }
+async function sbRest(caminho, op){
+  op=op||{}; const t=await contaToken(); if(!t) throw new Error('Entre na sua conta.');
+  const h={apikey:SB_CHAVE, authorization:'Bearer '+t, accept:'application/json'};
+  if(op.body!==undefined) h['content-type']='application/json'; if(op.prefer) h.prefer=op.prefer;
+  const r=await fetch(SB_URL+'/rest/v1/'+caminho, {method:op.method||'GET', headers:h, body:op.body!==undefined?JSON.stringify(op.body):undefined});
+  const txt=await r.text(); let d=null; try{ d=txt?JSON.parse(txt):null; }catch(e){ d=null; }
+  if(!r.ok) throw new Error((d&&(d.message||d.hint))||'Não foi possível falar com a sua conta agora.');
+  return d;
+}
+const soDig=s=>String(s||'').replace(/\D/g,'');
+function cpfValido(c){ c=soDig(c); if(c.length!==11 || /^(\d)\1{10}$/.test(c)) return false;
+  const dv=n=>{ let s=0; for(let i=0;i<n;i++) s+=+c[i]*(n+1-i); const r=(s*10)%11; return r===10?0:r; };
+  return dv(9)===+c[9] && dv(10)===+c[10]; }
+const fmtCpf=c=>{ c=soDig(c).slice(0,11); return c.replace(/^(\d{3})(\d)/,'$1.$2').replace(/^(\d{3})\.(\d{3})(\d)/,'$1.$2.$3').replace(/\.(\d{3})(\d{1,2})$/,'.$1-$2'); };
+const fmtFone=c=>{ c=soDig(c).slice(0,11); return c.length<3?c:'('+c.slice(0,2)+') '+(c.length>10?c.slice(2,7)+'-'+c.slice(7):c.slice(2,6)+(c.length>6?'-'+c.slice(6):'')); };
+const fmtCep=c=>{ c=soDig(c).slice(0,8); return c.length>5?c.slice(0,5)+'-'+c.slice(5):c; };
+function contaIniciais(){
+  const n=(CX.perfil&&CX.perfil.nome||'').trim().split(/\s+/).filter(Boolean);
+  if(n.length) return (n[0][0]+(n.length>1?n[n.length-1][0]:'')).toUpperCase();
+  return (contaEmail()[0]||'?').toUpperCase();
+}
+const dataBR=d=>{ try{ return new Date(d).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit'}); }catch(e){ return ''; } };
+const dataHoraBR=d=>{ try{ return new Date(d).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}); }catch(e){ return ''; } };
+
+/* ---------------- cadastro (perfis) ---------------- */
+async function contaPerfil(forcar){
+  if(!contaLogada()) return null;
+  if(CX.perfil!==undefined && !forcar) return CX.perfil;
+  const uid=contaUid(); if(!uid) return null;
+  const l=await sbRest('perfis?select=*&user_id=eq.'+encodeURIComponent(uid));
+  CX.perfil=(l&&l[0])||null; contaAvatar(); return CX.perfil;
+}
+async function contaSalvarPerfil(d){
+  const uid=contaUid(); if(!uid) throw new Error('Entre na sua conta.');
+  const corpo=Object.assign({user_id:uid, atualizado_em:new Date().toISOString()}, d);
+  await sbRest('perfis?on_conflict=user_id', {method:'POST', prefer:'resolution=merge-duplicates,return=minimal', body:corpo});
+  CX.perfil=Object.assign({}, CX.perfil||{}, corpo); contaAvatar();
+}
+
+/* ---------------- talhões da conta (salvos junto com o projeto local) ---------------- */
+function contornoSimples(polys){
+  const tol=1e-5, r6=v=>Math.round(v*1e6)/1e6;
+  const dp=pts=>{ if(pts.length<4) return pts; const keep=new Uint8Array(pts.length); keep[0]=keep[pts.length-1]=1; const st=[[0,pts.length-1]];
+    while(st.length){ const [a,z]=st.pop(); let dm=0,ix=-1; const [x1,y1]=pts[a],[x2,y2]=pts[z], dx=x2-x1, dy=y2-y1, L=dx*dx+dy*dy||1e-18;
+      for(let i=a+1;i<z;i++){ let t=((pts[i][0]-x1)*dx+(pts[i][1]-y1)*dy)/L; t=Math.max(0,Math.min(1,t)); const d=Math.hypot(pts[i][0]-(x1+t*dx), pts[i][1]-(y1+t*dy)); if(d>dm){dm=d;ix=i;} }
+      if(dm>tol && ix>0){ keep[ix]=1; st.push([a,ix],[ix,z]); } }
+    return pts.filter((p,i)=>keep[i]); };
+  return (polys||[]).map(p=>{ let r=dp(p.outer); const passo=Math.ceil(r.length/400); if(passo>1) r=r.filter((q,i)=>i%passo===0||i===r.length-1); return r.map(q=>[r6(q[0]),r6(q[1])]); });
+}
+function contaTalhaoAgendar(){
+  if(!contaLogada() || !E.kml || !E.polysLL) return;
+  clearTimeout(CX.salvarT);
+  CX.salvarT=setTimeout(()=>contaSalvarTalhaoAgora().catch(e=>console.warn('talhão não foi para a conta:', e.message)), 4000);
+}
+async function contaSalvarTalhaoAgora(){
+  if(!contaLogada() || !E.kml || !E.polysLL || !E.centro || typeof CompressionStream==='undefined') return null;
+  clearTimeout(CX.salvarT);
+  const uid=contaUid(); if(!uid) return null;
+  const proj=JSON.stringify(estadoSalvo());
+  const chave=(await sha256hex(String(E.idAreaBase||E.idArea||E.arquivo||'talhao'))).slice(0,24);
+  const area=await hashDoTalhao(E.polysLL);
+  const marca=chave+':'+area+':'+(await sha256hex(proj.replace(/"quando":"[^"]*",/,''))).slice(0,16);
+  if(CX.ultimo===marca) return chave;
+  const gz=await new Response(new Blob([proj]).stream().pipeThrough(new CompressionStream('gzip'))).blob();
+  const t=await contaToken(); if(!t) return null;
+  const up=await fetch(SB_URL+'/storage/v1/object/projetos/'+uid+'/'+chave+'.json.gz', {method:'POST',
+    headers:{apikey:SB_CHAVE, authorization:'Bearer '+t, 'content-type':'application/gzip', 'x-upsert':'true', 'cache-control':'no-cache'}, body:gz});
+  if(!up.ok) throw new Error('Storage respondeu '+up.status);
+  await sbRest('talhoes?on_conflict=user_id,chave', {method:'POST', prefer:'resolution=merge-duplicates,return=minimal', body:{
+    user_id:uid, chave, codigo:chave.slice(0,6).toUpperCase(), nome:String(E.arquivo||'Talhão').slice(0,120), area_hash:area,
+    ha:+(areaPoligonos(E.polysLL)/1e4).toFixed(2), centro:[+E.centro[0].toFixed(6), +E.centro[1].toFixed(6)],
+    contorno:contornoSimples(E.polysLL), atualizado_em:new Date().toISOString()}});
+  CX.ultimo=marca; CX.talhoes=null;
+  return chave;
+}
+async function contaTalhoes(forcar){
+  if(CX.talhoes && !forcar) return CX.talhoes;
+  CX.talhoes=await sbRest('talhoes?select=id,chave,codigo,nome,area_hash,ha,centro,contorno,atualizado_em&order=atualizado_em.desc&limit=300')||[];
+  return CX.talhoes;
+}
+async function contaCompras(forcar){
+  if(CX.compras && !forcar) return CX.compras;
+  CX.compras=await sbRest('compras?select=id,plano,area_hash,ha,camadas,valor,cupom,status,criado_em,pago_em,downloads&status=eq.pago&order=pago_em.desc&limit=300')||[];
+  return CX.compras;
+}
+async function contaBaixarProjeto(t){
+  const tok=await contaToken(); if(!tok) throw new Error('Entre na sua conta.');
+  const r=await fetch(SB_URL+'/storage/v1/object/authenticated/projetos/'+contaUid()+'/'+t.chave+'.json.gz', {headers:{apikey:SB_CHAVE, authorization:'Bearer '+tok}});
+  if(!r.ok) throw new Error('O projeto deste talhão não está na sua conta.');
+  const buf=await r.arrayBuffer();
+  try{ return JSON.parse(await new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip'))).text()); }
+  catch(e){ return JSON.parse(new TextDecoder().decode(buf)); }   // já veio descomprimido
+}
+
+/* ---------------- miniatura e card ---------------- */
+function contaAvatar(){
+  const av=$('#contaAv'), logado=contaLogada();
+  av.classList.toggle('logado', logado);
+  $('#contaAvIcone').style.display=logado?'none':''; $('#contaAvIniciais').hidden=!logado;
+  $('#contaAvIniciais').textContent=logado?contaIniciais():'';
+  av.setAttribute('aria-label', logado?'Sua conta ('+contaEmail()+')':'Entrar na sua conta');
+}
+const ICONE_CONTA={
+  talhoes:'<path d="M12 21s-6-5.3-6-10a6 6 0 0 1 12 0c0 4.7-6 10-6 10z"/><circle cx="12" cy="11" r="2.2"/>',
+  pagamentos:'<rect x="3.5" y="5.5" width="17" height="13" rx="1.5"/><path d="M3.5 9.5h17M7 14.5h4"/>',
+  dados:'<circle cx="12" cy="8.5" r="3.4"/><path d="M5 19.5c1.3-3 3.9-4.6 7-4.6s5.7 1.6 7 4.6"/>',
+  sair:'<path d="M14 5h4.5v14H14M10.5 8.5 7 12l3.5 3.5M7 12h9"/>'
+};
+function contaFechar(){ const d=$('#contaCard'); if(d.open) d.close(); $('#contaAv').setAttribute('aria-expanded','false'); CX.tela=null; document.body.classList.remove('conta-aberta'); }
+/* abre o card: tela = entrar | cadastro | dados | menu | pagamentos; modal quando outro diálogo (pagamento) está aberto */
+async function contaAbrir(tela, op){
+  op=op||{}; const d=$('#contaCard');
+  if(!contaLogada()) tela='entrar';
+  else if(!tela || tela==='entrar'){ let p=null; try{ p=await contaPerfil(); }catch(e){} tela=p?'menu':'cadastro'; }
+  CX.tela=tela; CX.modal=!!op.modal || !!document.querySelector('dialog[open]:not(#contaCard)');
+  contaDesenhar(op);
+  d.classList.toggle('largo', tela==='pagamentos');
+  if(!d.open){ if(CX.modal) d.showModal(); else d.show(); }
+  document.body.classList.add('conta-aberta');
+  $('#contaAv').setAttribute('aria-expanded','true');
+  if(tela==='menu') contaAcao('menu');   // carrega os contadores
+  const foco=d.querySelector('[data-foco]')||d.querySelector('input,button:not(.fechar)'); if(foco) setTimeout(()=>foco.focus(),30);
+}
+function contaDesenhar(op){
+  op=op||{}; const c=$('#contaCorpo'), tela=CX.tela;
+  const fechar='<button class="fechar" type="button" data-cx="fechar" aria-label="Fechar">×</button>';
+  if(tela==='entrar'){
+    c.innerHTML=fechar+'<div class="ux-overline">SUA CONTA <span class="ux-dot"></span></div><h2>Entre para guardar seus talhões.</h2>'
+      +'<p class="nota">Seus talhões e compras ficam na conta: dá para abrir e baixar de novo em qualquer aparelho.</p>'
+      +'<div class="pg-login"><button type="button" class="btn btn-luz btn-bloco" data-cx="google" data-foco>Entrar com Google</button>'
+      +'<div class="pg-ou"><span>ou pelo e-mail</span></div>'
+      +'<div class="cupom"><input id="cxEmail" type="email" autocomplete="email" inputmode="email" placeholder="voce@fazenda.com.br" aria-label="Seu e-mail"><button class="btn btn-fio" type="button" data-cx="enviar">Enviar código</button></div>'
+      +'<div class="cupom" id="cxCodigoBox" hidden><input id="cxCodigo" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="Código do e-mail" aria-label="Código do e-mail"><button class="btn btn-fio" type="button" data-cx="codigo">Entrar</button></div>'
+      +'<p class="cupom-msg" id="cxMsg" role="status"></p></div>';
+    try{ $('#cxEmail').value=localStorage.getItem('plantare_email')||''; }catch(e){}
+    if(CONTA.erro){ $('#cxMsg').textContent='Não foi possível entrar: '+CONTA.erro; CONTA.erro=''; }
+    return;
+  }
+  if(tela==='cadastro' || tela==='dados'){
+    const p=CX.perfil||{}, novo=tela==='cadastro';
+    const campo=(id,rot,cls,val,extra)=>'<label class="campo '+(cls||'')+'" for="'+id+'">'+rot+'<input id="'+id+'" value="'+esc(val||'')+'" '+(extra||'')+'></label>';
+    c.innerHTML=fechar+(novo?'':'<button type="button" class="voltar" data-cx="menu">‹ CONTA</button>')
+      +'<div class="ux-overline">'+(novo?'CADASTRO':'MEUS DADOS')+' <span class="ux-dot"></span></div><h2>'+(novo?'Só falta o seu cadastro.':'Seus dados.')+'</h2>'
+      +'<p class="nota">'+(novo?'É rápido: usamos só para emitir a nota fiscal das suas compras.':'Usados na nota fiscal das suas compras.')+'</p>'
+      +'<form class="conta-form" id="cxForm" novalidate>'
+      +campo('cxNome','Nome completo','',p.nome,'autocomplete="name" data-foco')
+      +campo('cxCpf','CPF','c3',p.cpf?fmtCpf(p.cpf):'','inputmode="numeric" autocomplete="off" maxlength="14"')
+      +campo('cxZap','WhatsApp','c3',p.whatsapp?fmtFone(p.whatsapp):'','inputmode="tel" autocomplete="tel-national" maxlength="15"')
+      +campo('cxCep','CEP','c2',p.cep?fmtCep(p.cep):'','inputmode="numeric" autocomplete="postal-code" maxlength="9"')
+      +campo('cxRua','Rua / estrada','c4',p.logradouro,'autocomplete="address-line1"')
+      +campo('cxNum','Número','c2',p.numero,'autocomplete="off" placeholder="s/n"')
+      +campo('cxComp','Complemento','c4',p.complemento,'autocomplete="address-line2" placeholder="opcional"')
+      +campo('cxBairro','Bairro / localidade','c3',p.bairro,'autocomplete="off"')
+      +campo('cxCidade','Cidade','c2',p.cidade,'autocomplete="address-level2"')
+      +campo('cxUf','UF','c1',p.uf,'autocomplete="address-level1" maxlength="2" style="text-transform:uppercase"')
+      +'</form><p class="cupom-msg" id="cxMsg" role="status">'+esc(op.msg||'')+'</p>'
+      +'<div class="conta-acoes"><button type="button" class="link" data-cx="'+(novo?'depois':'menu')+'">'+(novo?'Agora não':'Cancelar')+'</button>'
+      +'<button type="button" class="btn btn-luz" data-cx="salvarPerfil">'+(novo?'Concluir cadastro':'Salvar')+'</button></div>'
+      +'<p class="conta-lgpd">Seus dados ficam na sua conta, protegidos, e não são compartilhados. Você pode pedir a exclusão quando quiser.</p>';
+    const mask=(id,f)=>$('#'+id).addEventListener('input',e=>{ const v=f(e.target.value); if(v!==e.target.value) e.target.value=v; });
+    mask('cxCpf',fmtCpf); mask('cxZap',fmtFone); mask('cxCep',fmtCep);
+    $('#cxCep').addEventListener('input',e=>{ if(soDig(e.target.value).length===8) contaBuscarCep(soDig(e.target.value)); });
+    $('#cxForm').addEventListener('submit',e=>{ e.preventDefault(); contaAcao('salvarPerfil'); });
+    return;
+  }
+  if(tela==='menu'){
+    const p=CX.perfil||{};
+    const item=(k,rot,extra)=>'<button type="button" data-cx="'+k+'"><svg viewBox="0 0 24 24">'+ICONE_CONTA[k]+'</svg><span>'+rot+'</span>'+(extra?'<em>'+extra+'</em>':'<em></em>')+'</button>';
+    c.innerHTML=fechar+'<div class="conta-quem"><div class="av">'+esc(contaIniciais())+'</div><div><strong>'+esc(p.nome||'Sua conta')+'</strong><span>'+esc(contaEmail())+'</span></div></div>'
+      +'<nav class="conta-menu" aria-label="Conta">'
+      +item('talhoes','Meus talhões', CX.talhoes?String(CX.talhoes.length):'')
+      +item('pagamentos','Pagamentos', CX.compras?String(CX.compras.length):'')
+      +item('dados','Meus dados', p.nome?'':'completar')
+      +item('sair','Sair')+'</nav>';
+    return;
+  }
+  if(tela==='pagamentos'){
+    c.innerHTML=fechar+'<button type="button" class="voltar" data-cx="menu">‹ CONTA</button><div class="ux-overline">PAGAMENTOS <span class="ux-dot"></span></div><h2>Extrato.</h2>'
+      +'<div class="extrato" id="cxExtrato"><p class="conta-vazio">Carregando…</p></div>';
+    Promise.all([contaCompras(true), contaTalhoes().catch(()=>[])]).then(([cs,ts])=>contaExtrato(cs,ts))
+      .catch(e=>{ $('#cxExtrato').innerHTML='<p class="conta-vazio">'+esc(e.message)+'</p>'; });
+  }
+}
+function contaTalhaoDaCompra(c){ return (CX.talhoes||[]).find(t=>t.area_hash && t.area_hash===c.area_hash)||null; }
+function contaExtrato(cs){
+  const el=$('#cxExtrato'); if(!el) return;
+  if(!cs.length){ el.innerHTML='<p class="conta-vazio">Nenhuma compra ainda. Quando você pagar um plano, ele aparece aqui.</p>'; return; }
+  el.innerHTML=cs.map((c,i)=>{
+    const t=contaTalhaoDaCompra(c), nome=t?t.nome:('Plano #'+c.plano);
+    const cam=(c.camadas||[]).map(k=>NOMES_CAMADAS[k]||k).join(', ');
+    return '<div class="extrato-lin" data-i="'+i+'"><button type="button" aria-expanded="false" data-cx="linha"><time>'+dataBR(c.pago_em||c.criado_em)+'</time><strong>'+esc(nome)+'</strong><b>'+brl(+c.valor||0)+'</b><i aria-hidden="true"></i></button>'
+      +'<div class="extrato-det"><dl>'
+      +'<dt>Comprado</dt><dd>'+esc(cam||'—')+'</dd>'
+      +'<dt>Área</dt><dd>'+fmt(+c.ha||0,2)+' ha</dd>'
+      +'<dt>Pago em</dt><dd>'+esc(dataHoraBR(c.pago_em||c.criado_em))+'</dd>'
+      +(c.cupom?'<dt>Cupom</dt><dd>'+esc(c.cupom)+(+c.valor===0?' · cortesia':'')+'</dd>':'')
+      +'<dt>Pedido</dt><dd style="font:11px var(--f-num)">'+esc(c.id)+'</dd>'
+      +'<dt>Downloads</dt><dd>'+(c.downloads||0)+'</dd></dl>'
+      +(t&&t.contorno?'<button type="button" class="btn btn-fio" data-cx="exibirCompra" data-i="'+i+'">Exibir no mapa</button>'
+        :'<p class="nota" style="margin:0">Este talhão não está salvo na sua conta, então não dá para mostrar no mapa.</p>')
+      +'</div></div>';
+  }).join('');
+}
+async function contaBuscarCep(cep){
+  try{
+    const r=await fetch('https://viacep.com.br/ws/'+cep+'/json/'); const j=await r.json();
+    if(j.erro){ $('#cxMsg').textContent='CEP não encontrado. Preencha o endereço à mão.'; return; }
+    const pos=(id,v)=>{ const el=$('#'+id); if(el && v && !el.value) el.value=v; };
+    pos('cxRua',j.logradouro); pos('cxBairro',j.bairro); pos('cxCidade',j.localidade); pos('cxUf',j.uf);
+    CX.ibge=j.ibge||null; $('#cxMsg').textContent='';
+    const prox=['cxRua','cxNum'].map(id=>$('#'+id)).find(el=>!el.value); if(prox) prox.focus();
+  }catch(e){ /* sem internet: preenche à mão */ }
+}
+async function contaAcao(a, alvo){
+  if(a==='fechar') return contaFechar();
+  if(a==='menu'){ CX.tela='menu'; $('#contaCard').classList.remove('largo'); contaDesenhar(); Promise.all([contaTalhoes().catch(()=>null), contaCompras().catch(()=>null)]).then(()=>{ if(CX.tela==='menu') contaDesenhar(); }); return; }
+  if(a==='google') return entrarGoogle();
+  if(a==='enviar'){
+    const email=$('#cxEmail').value.trim();
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ $('#cxMsg').textContent='Informe um e-mail válido.'; $('#cxEmail').focus(); return; }
+    alvo.disabled=true; $('#cxMsg').textContent='Enviando…';
+    try{ await enviarLinkEmail(email); try{ localStorage.setItem('plantare_email', email); }catch(e){}
+      $('#cxCodigoBox').hidden=false; $('#cxMsg').textContent='Enviamos um código para '+email+'. Digite aqui (ou abra o link do e-mail neste aparelho).'; $('#cxCodigo').focus(); }
+    catch(e){ $('#cxMsg').textContent=e.message; }
+    finally{ setTimeout(()=>{ alvo.disabled=false; }, 20000); }
+    return;
+  }
+  if(a==='codigo'){
+    const cod=soDig($('#cxCodigo').value), email=$('#cxEmail').value.trim();
+    if(cod.length<6){ $('#cxMsg').textContent='Digite o código que chegou no e-mail.'; return; }
+    $('#cxMsg').textContent='Conferindo…';
+    try{ await confirmarCodigoEmail(email, cod); }catch(e){ $('#cxMsg').textContent=e.message; }
+    return;
+  }
+  if(a==='depois') return contaFechar();
+  if(a==='salvarPerfil'){
+    alvo=alvo||$('#contaCard [data-cx=salvarPerfil]');
+    const v=id=>$('#'+id).value.trim(), erros=[];
+    const d={nome:v('cxNome').replace(/\s+/g,' '), cpf:soDig(v('cxCpf')), whatsapp:soDig(v('cxZap')), cep:soDig(v('cxCep')),
+      logradouro:v('cxRua'), numero:v('cxNum')||'s/n', complemento:v('cxComp')||null, bairro:v('cxBairro'), cidade:v('cxCidade'), uf:v('cxUf').toUpperCase()};
+    if(CX.ibge) d.ibge=CX.ibge;
+    const marca=(id,ok,msg)=>{ const l=$('#'+id).closest('.campo'); l.classList.toggle('erro',!ok); if(!ok) erros.push([id,msg]); };
+    marca('cxNome', d.nome.split(' ').length>=2 && d.nome.length>=5, 'Informe nome e sobrenome.');
+    marca('cxCpf', cpfValido(d.cpf), 'CPF inválido.');
+    marca('cxZap', d.whatsapp.length>=10, 'WhatsApp com DDD.');
+    marca('cxCep', d.cep.length===8, 'CEP com 8 números.');
+    marca('cxRua', !!d.logradouro, 'Informe a rua ou estrada.');
+    marca('cxBairro', !!d.bairro, 'Informe o bairro ou a localidade.');
+    marca('cxCidade', !!d.cidade, 'Informe a cidade.');
+    marca('cxUf', /^[A-Z]{2}$/.test(d.uf), 'UF com 2 letras.');
+    if(erros.length){ $('#cxMsg').textContent=erros[0][1]; $('#'+erros[0][0]).focus(); return; }
+    alvo.disabled=true; $('#cxMsg').textContent='Salvando…';
+    try{ await contaSalvarPerfil(d); $('#cxMsg').textContent='';
+      if(CX.modal){ contaFechar(); const m=$('#pgGerarMsg'); if(m) m.textContent='Cadastro concluído. Agora é só gerar o Pix.'; }
+      else contaAcao('menu'); }
+    catch(e){ $('#cxMsg').textContent=e.message; alvo.disabled=false; }
+    return;
+  }
+  if(a==='dados'){ CX.tela='dados'; contaDesenhar(); return; }
+  if(a==='pagamentos'){ CX.tela='pagamentos'; $('#contaCard').classList.add('largo'); contaDesenhar(); return; }
+  if(a==='sair'){ contaFechar(); if(CX.mapa) contaSairMapa(); await sairConta(); return; }
+  if(a==='linha'){ const l=alvo.closest('.extrato-lin'), ab=!l.classList.contains('aberto');
+    document.querySelectorAll('.extrato-lin.aberto').forEach(x=>{ x.classList.remove('aberto'); x.firstElementChild.setAttribute('aria-expanded','false'); });
+    l.classList.toggle('aberto',ab); alvo.setAttribute('aria-expanded',String(ab)); return; }
+  if(a==='exibirCompra'){ const c=CX.compras[+alvo.dataset.i], t=c&&contaTalhaoDaCompra(c); if(t){ contaFechar(); contaExibir(t,{origem:'pagamentos', compra:c}); } return; }
+  if(a==='talhoes'){ contaFechar(); contaMostrarTalhoes(); return; }
+}
+$('#contaCard').addEventListener('click',e=>{ const b=e.target.closest('[data-cx]'); if(b) contaAcao(b.dataset.cx, b); });
+$('#contaCard').addEventListener('keydown',e=>{ if(e.key==='Enter' && e.target.id==='cxEmail'){ e.preventDefault(); contaAcao('enviar', $('#contaCard [data-cx=enviar]')); }
+  if(e.key==='Enter' && e.target.id==='cxCodigo'){ e.preventDefault(); contaAcao('codigo'); } });
+$('#contaCard').addEventListener('close',()=>{ $('#contaAv').setAttribute('aria-expanded','false'); CX.tela=null; document.body.classList.remove('conta-aberta'); });
+$('#contaAv').addEventListener('click',()=>{ if($('#contaCard').open) contaFechar(); else contaAbrir(); });
+/* clique fora fecha o card (quando não é modal) */
+document.addEventListener('pointerdown',e=>{ const d=$('#contaCard'); if(!d.open || CX.modal) return;
+  if(!d.contains(e.target) && !$('#contaAv').contains(e.target)) contaFechar(); });
+/* login/saída: a miniatura e o card acompanham */
+CONTA.ouvintes.push(()=>{
+  CX.perfil=undefined; CX.talhoes=null; CX.compras=null; CX.ultimo='';
+  contaAvatar();
+  if(!contaLogada()){ if(CX.mapa) contaSairMapa(); if($('#contaCard').open && CX.tela!=='entrar'){ CX.tela='entrar'; contaDesenhar(); } return; }
+  contaPerfil().then(p=>{ contaAvatar(); const d=$('#contaCard');
+    if(d.open && CX.tela==='entrar'){ CX.tela=p?'menu':'cadastro'; contaDesenhar(); } }).catch(()=>{});
+  if(E.kml && E.polysLL) contaTalhaoAgendar();   // entrou com um talhão aberto: ele já vai para a conta
+});
+
+/* ---------------- talhões no mapa ---------------- */
+function contaFonte(dados){
+  const m=MAPA.map; if(!m) return;
+  if(!m.getSource('contaCerca')){
+    m.addSource('contaCerca',{type:'geojson', data:VAZIO});
+    m.addLayer({id:'contaCerca-brilho', type:'line', source:'contaCerca', paint:{'line-color':COR.luz,'line-width':12,'line-blur':9,'line-opacity':.45}});
+    m.addLayer({id:'contaCerca', type:'line', source:'contaCerca', layout:{'line-join':'round'}, paint:{'line-color':COR.cerca,'line-width':2.2}});
+  }
+  m.getSource('contaCerca').setData(dados||VAZIO);
+}
+const contaGeo=ts=>colecao(ts.filter(t=>t.contorno).flatMap(t=>t.contorno.map(r=>({type:'Feature', properties:{id:t.id}, geometry:{type:'LineString', coordinates:r.concat([r[0]])}}))));
+function contaCaixa(ts){
+  let a=[Infinity,Infinity], b=[-Infinity,-Infinity];
+  for(const t of ts){ const pts=(t.contorno||[]).flat(); if(!pts.length && t.centro) pts.push(t.centro);
+    for(const q of pts){ a=[Math.min(a[0],q[0]),Math.min(a[1],q[1])]; b=[Math.max(b[0],q[0]),Math.max(b[1],q[1])]; } }
+  return isFinite(a[0])?[a,b]:null;
+}
+async function contaEntrarMapa(){
+  if(CX.mapa) return true;
+  if(E.etapa==='desenho'){ aviso('Saia do desenho antes de abrir seus talhões.'); return false; }
+  if(E.etapa==='voando' || E.etapa==='analisando' || E.etapa==='calculando'){ aviso('Espere o cálculo terminar para abrir seus talhões.'); return false; }
+  if(E.etapa!=='abertura'){
+    if(!confirm('Fechar o plano aberto para ver seus talhões? Ele continua salvo neste aparelho e na sua conta.')) return false;
+    salvar(); await contaSalvarTalhaoAgora().catch(()=>{}); await voltarAoInicio();
+  }
+  CX.mapa=true; document.body.classList.add('conta-mapa');
+  $('#hero').classList.add('fora'); $('#cenaPainel').classList.remove('aberto');
+  MAPA.base=null; MAPA.emVoo=true; ligarInteracao(true); contaFonte(null);
+  return true;
+}
+function contaVoarPara(ts, pitch, bearing){
+  const m=MAPA.map, cx=contaCaixa(ts); if(!cx) return;
+  const coluna=!$('#contaColuna').hidden && innerWidth>=760 ? Math.min(360,innerWidth-32)+24 : 0;
+  const baixo=!$('#contaBarra').hidden ? 110 : (!$('#contaColuna').hidden && innerWidth<760 ? Math.round(innerHeight*.46) : 0);
+  m.stop(); m.setPadding({top:0,bottom:baixo,left:0,right:coluna});
+  let cam=null; try{ cam=m.cameraForBounds(cx,{padding:{top:110,bottom:70,left:60,right:60}, bearing}); }catch(e){}
+  if(!cam) return;
+  const alvo={center:[cam.center.lng, cam.center.lat], zoom:Math.min(cam.zoom-(pitch>30?.4:0), 16.5), pitch, bearing};
+  MAPA.emVoo=true;
+  voarPara(alvo, {final:'talhao'}, ()=>{ CENA.fx=0; CENA.travessia=0; MAPA.emVoo=false; });
+}
+function contaPins(ts){
+  CX.pins.forEach(p=>p.remove()); CX.pins=[];
+  for(const t of ts){ if(!t.centro) continue;
+    const el=document.createElement('div'); el.className='conta-pin'; el.dataset.id=t.id;
+    el.innerHTML='<s></s><i></i><i></i><b></b><span>'+esc(t.nome)+'</span>';
+    el.addEventListener('click',ev=>{ ev.stopPropagation(); contaFocarNaLista(t.id); });
+    CX.pins.push(new maplibregl.Marker({element:el, anchor:'center'}).setLngLat(t.centro).addTo(MAPA.map));
+  }
+}
+async function contaMostrarTalhoes(){
+  let ts; try{ etiqueta('Buscando seus talhões…'); ts=await contaTalhoes(true); }catch(e){ etiqueta(null); aviso(e.message); return; }
+  etiqueta(null);
+  if(!(await contaEntrarMapa())) return;
+  CX.foco=null; $('#contaBarra').hidden=true;
+  $('#contaColunaSub').textContent=ts.length?(ts.length===1?'1 talhão na sua conta':ts.length+' talhões na sua conta'):'';
+  $('#contaColunaLista').innerHTML=ts.length?ts.map(t=>'<li class="conta-tal" data-id="'+t.id+'"><button type="button" aria-expanded="false"><strong>'+esc(t.nome)+'</strong><em>'+fmt(+t.ha||0,1)+' ha</em>'
+      +'<span>#'+esc(t.codigo)+' · modificado em '+dataHoraBR(t.atualizado_em)+'</span></button>'
+      +'<div class="det"><div class="acoes"><button type="button" class="btn btn-luz" data-tal="reeditar">Reeditar</button><button type="button" class="btn btn-fio" data-tal="todos">Ver todos</button></div></div></li>').join('')
+    :'<li class="conta-vazio">Nenhum talhão ainda. Com a conta aberta, todo projeto que você salvar aparece aqui.</li>';
+  $('#contaColuna').hidden=false;
+  contaFonte(contaGeo(ts)); contaPins(ts);
+  if(ts.length) contaVoarPara(ts, 55, -12);
+}
+function contaFocarNaLista(id){
+  const t=(CX.talhoes||[]).find(x=>x.id===id); if(!t) return;
+  CX.foco=t;
+  document.querySelectorAll('.conta-tal').forEach(li=>{ const at=li.dataset.id===id; li.classList.toggle('ativo',at); li.firstElementChild.setAttribute('aria-expanded',String(at)); if(at) li.scrollIntoView({block:'nearest', behavior:reduzMov?'auto':'smooth'}); });
+  CX.pins.forEach(p=>p.getElement().classList.toggle('ativo', p.getElement().dataset.id===id));
+  contaVoarPara([t], 45, -10);
+}
+$('#contaColunaLista').addEventListener('click',e=>{
+  const acao=e.target.closest('[data-tal]'), li=e.target.closest('.conta-tal'); if(!li) return;
+  const t=(CX.talhoes||[]).find(x=>x.id===li.dataset.id); if(!t) return;
+  if(acao && acao.dataset.tal==='reeditar') return contaReeditar(t);
+  if(acao && acao.dataset.tal==='todos'){ li.classList.remove('ativo'); CX.foco=null; CX.pins.forEach(p=>p.getElement().classList.remove('ativo')); return contaVoarPara(CX.talhoes, 55, -12); }
+  if(!acao) contaFocarNaLista(t.id);
+});
+$('#contaColunaFechar').addEventListener('click',()=>contaSairMapa());
+/* "Exibir no mapa" do extrato: recolhe tudo, voa até a área e mostra o Reeditar */
+async function contaExibir(t, op){
+  if(!(await contaEntrarMapa())) return;
+  $('#contaColuna').hidden=true; CX.pins.forEach(p=>p.remove()); CX.pins=[];
+  CX.foco=t; contaFonte(contaGeo([t]));
+  $('#contaBarraNome').textContent=t.nome;
+  $('#contaBarraMeta').textContent='#'+t.codigo+' · '+fmt(+t.ha||0,1)+' ha'+(op&&op.compra?' · pago em '+dataBR(op.compra.pago_em):'');
+  $('#contaBarra').hidden=false;
+  contaVoarPara([t], 45, -10);
+}
+$('#contaBarraReeditar').addEventListener('click',()=>{ if(CX.foco) contaReeditar(CX.foco); });
+$('#contaBarraFechar').addEventListener('click',()=>contaSairMapa());
+async function contaReeditar(t){
+  try{ etiqueta('Abrindo o projeto…'); const o=await contaBaixarProjeto(t); contaSairMapa(false); await restaurar(o); }
+  catch(e){ aviso(e.message||'Não foi possível abrir este projeto.'); }
+  finally{ etiqueta(null); }
+}
+/* sai do modo "conta no mapa"; voltar=true leva a câmera de volta para a abertura */
+function contaSairMapa(voltar){
+  if(!CX.mapa) return;
+  CX.mapa=false; CX.foco=null;
+  CX.pins.forEach(p=>p.remove()); CX.pins=[]; contaFonte(null);
+  $('#contaColuna').hidden=true; $('#contaBarra').hidden=true;
+  document.body.classList.remove('conta-mapa'); ligarInteracao(false);
+  const m=MAPA.map; m.stop(); m.setPadding({top:0,bottom:0,left:0,right:0});
+  if(voltar===false) return;
+  const r=regiao(), volta={center:[r.lon,r.lat], zoom:12.4, pitch:62, bearing:(Math.random()-.5)*50};
+  MAPA.base=null; MAPA.emVoo=true;
+  voarPara(volta, {final:'abertura'}, ()=>{ MAPA.base=Object.assign({},volta); MAPA.emVoo=false; CENA.neutra=false; $('#hero').classList.remove('fora'); });
+  atualizarLegenda();
+}
+addEventListener('keydown',e=>{
+  if(e.key!=='Escape') return;
+  if($('#contaCard').open && !CX.modal){ contaFechar(); return; }
+  if(CX.mapa && !document.querySelector('dialog[open]')) contaSairMapa();
+});
+contaAvatar();
+if(contaLogada()) contaPerfil().then(contaAvatar).catch(()=>{});
+</script>
+
 <style id="pwa">
 /* Aviso "instale o app" (PWA) */
 .instalar{position:fixed;left:50%;bottom:calc(16px + env(safe-area-inset-bottom,0px));transform:translate(-50%,24px);opacity:0;z-index:9999;
