@@ -15,6 +15,7 @@ ORIGENS = "https://plantare.matheusuener.com.br,https://matheusuener.com.br"
 CUPONS = '{"CAMPO10":0.10}'
 # Validade do Pix (ISO 8601)
 EXPIRA = "PT30M"
+# Só em teste, com o token do vendedor de teste: PAGADOR_TESTE = "APRO" (o Mercado Pago aprova o Pix de teste sozinho).
 
 # Segredos (não vão para o arquivo):
 #   npx wrangler secret put MP_ACCESS_TOKEN      ← Access Token de produção do Mercado Pago

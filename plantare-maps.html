@@ -7099,7 +7099,7 @@ function calcularPreco(areaHa, camadas, cupom) {
 /* ---- serviço Pix ----
    Endereço do Worker (pix-worker/). Vazio = checkout demonstrativo, sem cobrança.
    Para testar sem publicar: localStorage.setItem('plantare_pix_api','https://…') */
-const PIX_API_PADRAO='';
+const PIX_API_PADRAO='https://pix.matheusuener.com.br';
 function pixApi(){ let u=''; try{ u=localStorage.getItem('plantare_pix_api')||''; }catch(e){} return (u||PIX_API_PADRAO).replace(/\/+$/,''); }
 /* camadas que cada formato leva; relatório, imagem e projeto são grátis */
 const CAMADAS_TODAS=['linhas_ab','bordadura','percurso','manobras'];
@@ -9644,7 +9644,7 @@ function abrirPagamento(){
   $('#pgDemo').hidden=PG.modo!=='demo';
   document.querySelector('#pgDetalhes .cupom').hidden=PG.modo==='gratis'; $('label[for="pgCupom"]').hidden=PG.modo==='gratis';
   $('#pgEmailBox').hidden=PG.modo!=='pix'; $('#pgGerar').disabled=false; $('#pgGerarMsg').textContent='';
-  $('#pgPix').hidden=PG.modo==='pix'; $('#pgEspera').hidden=true;
+  $('#pgPix').hidden=PG.modo==='pix'; $('#pgEspera').hidden=true; $('#pgCopiar').disabled=false;
   $('#pgQr').hidden=PG.modo==='gratis'; document.querySelector('#pgPix .copia').hidden=PG.modo==='gratis';
   $('#pgSimular').hidden=false; $('#pgSimular').disabled=true;
   $('#pgSimular').textContent=PG.modo==='gratis'?'Baixar os arquivos':'Confirmar simulação e baixar';
@@ -9669,14 +9669,28 @@ async function pgGerarPix(){
     const r=await pgChamar('/cobranca', {plano:PG.id, polys:E.polysLL, camadas:PG.camadas, email, cupom:PG.cupom||undefined});
     PG.pedido=r.id; PG.preco=r.preco; pgMostrarTotal();
     $('#pgEmailBox').hidden=true; $('#pgPix').hidden=false; $('#pgQr').hidden=false; document.querySelector('#pgPix .copia').hidden=false;
-    $('#pgQr').innerHTML=r.qr_code_base64?'<img alt="QR Code do Pix" src="data:image/png;base64,'+r.qr_code_base64+'">':qrSvg(r.qr_code||'');
-    $('#pgQr').setAttribute('aria-label','QR Code do Pix de '+brl(r.valor));
-    $('#pgCopia').value=r.qr_code||'';
+    PG.valor=r.valor; PG.qrPronto=false; pgMostrarQr(r);
     $('#pgSimular').hidden=true; $('#pgEspera').hidden=false;
-    $('#pgPixNota').textContent='Pague pelo app do banco (QR ou copia e cola). O download começa sozinho quando o Pix cair'+(r.expira?' · vale até '+new Date(r.expira).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}):'')+'.';
     document.querySelector('#pgDetalhes .cupom').hidden=true; $('label[for="pgCupom"]').hidden=true;
     pgEsperar(r.expira?Date.parse(r.expira):Date.now()+30*60e3);
   }catch(e){ $('#pgGerarMsg').textContent=e.message; $('#pgGerar').disabled=false; }
+}
+/* O Mercado Pago pode criar o Pix de forma assíncrona: sem QR na resposta, ele chega depois pelo /status.
+   Enquanto não houver código, não desenha QR nenhum (um QR vazio não é pagável). */
+function pgMostrarQr(r){
+  const tem=!!(r.qr_code||r.qr_code_base64);
+  if(tem){
+    $('#pgQr').innerHTML=r.qr_code_base64?'<img alt="QR Code do Pix" src="data:image/png;base64,'+r.qr_code_base64+'">':qrSvg(r.qr_code);
+    $('#pgQr').setAttribute('aria-label','QR Code do Pix de '+brl(PG.valor));
+    PG.qrPronto=true;
+  }else{
+    $('#pgQr').innerHTML='';
+    $('#pgQr').setAttribute('aria-label','Gerando o QR Code do Pix');
+  }
+  $('#pgCopia').value=r.qr_code||''; $('#pgCopiar').disabled=!r.qr_code;
+  $('#pgPixNota').textContent=tem
+    ? 'Pague pelo app do banco (QR ou copia e cola). O download começa sozinho quando o Pix cair'+(r.expira?' · vale até '+new Date(r.expira).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}):'')+'.'
+    : 'O Mercado Pago está gerando o QR Code do Pix. Ele aparece aqui em instantes.';
 }
 function pgEsperar(ate){
   pgPararEspera();
@@ -9685,6 +9699,8 @@ function pgEsperar(ate){
     try{
       const s=await pgChamar('/status/'+encodeURIComponent(PG.pedido));
       if(s.pago){ pagoGuardar(PG.id, s.camadas&&s.camadas.length?s.camadas:PG.camadas, PG.pedido); $('#pgEspera').hidden=true; PG.modo='pago'; pagamentoConfirmado(); return; }
+      if(s.encerrado){ $('#pgEspera').hidden=true; $('#pgPixNota').textContent='Este Pix não foi concluído ('+s.status+'). Feche e gere outro para baixar.'; return; }
+      if(!PG.qrPronto && (s.qr_code||s.qr_code_base64)){ pgMostrarQr(s); if(s.expira) ate=Date.parse(s.expira); }
     }catch(e){ /* rede instável: tenta de novo */ }
     if(Date.now()>ate){ $('#pgEspera').hidden=true; $('#pgPixNota').textContent='Este Pix expirou. Feche e gere outro para baixar.'; return; }
     PG.timer=setTimeout(passo, 4000);

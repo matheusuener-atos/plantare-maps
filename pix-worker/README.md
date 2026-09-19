@@ -27,6 +27,7 @@ O preço é calculado aqui, a partir do polígono do talhão. A tabela fica em `
 | Quem pode chamar o serviço | `ORIGENS` no `wrangler.toml` (o endereço onde o Plantare estiver publicado; `null` libera o arquivo local, só para teste) |
 | Cupons | `CUPONS` no `wrangler.toml`, ex.: `{"CAMPO10":0.10}` |
 | Validade do Pix | `EXPIRA` (padrão `PT30M`) |
+| Aprovação automática do Pix de teste | `PAGADOR_TESTE = "APRO"` no `wrangler.toml`, **só com o token do vendedor de teste**. Apague antes de ir para produção |
 | Preços e faixas | `src/preco.js` **e** o bloco `preco` do `plantare.html` |
 
 Para testar com credenciais de teste do Mercado Pago sem mexer no app publicado, abra o app e rode no console:

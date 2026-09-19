@@ -9,7 +9,7 @@
 
    Segredos (wrangler secret put …):  MP_ACCESS_TOKEN, MP_WEBHOOK_SECRET
    Variáveis (wrangler.toml [vars]):   ORIGENS (lista separada por vírgula), CUPONS (JSON {"CODIGO":0.1}),
-                                       EXPIRA (ISO 8601, padrão PT30M)
+                                       EXPIRA (ISO 8601, padrão PT30M), PAGADOR_TESTE (só em teste: "APRO")
    Regras de segurança
      · o preço é calculado AQUI, a partir do polígono do talhão (a área que o navegador manda não vale);
      · o token do Mercado Pago só existe como segredo do Worker;
@@ -46,14 +46,15 @@ function orcar(body, env) {
   const p = calcularPreco(ha, body.camadas, desc);
   return { preco: p, cupom: cod ? { codigo: cod, valido: desc > 0, desconto: desc } : null };
 }
-/* referência curta que volta no status: plantare|plano|camadas|ha */
+/* referência curta que volta no status: plantare-plano-camadas-centésimos de ha (ex.: plantare-1LKP5C-ABP-282).
+   A Orders API só aceita letras, números, - e _ (máx. 64). */
 const COD = { linhas_ab: 'A', bordadura: 'B', percurso: 'P', manobras: 'M' };
-const refDe = (plano, camadas, ha) => ['plantare', String(plano).replace(/[^\w-]/g, '').slice(0, 16), camadas.map(c => COD[c]).join(''), ha.toFixed(2)].join('|');
+const refDe = (plano, camadas, ha) => ['plantare', String(plano).replace(/[^A-Za-z0-9]/g, '').slice(0, 16) || 'plano', camadas.map(c => COD[c]).join(''), Math.round(ha * 100)].join('-');
 function lerRef(ref) {
-  const [app, plano, cods, ha] = String(ref || '').split('|');
+  const [app, plano, cods, cent] = String(ref || '').split('-');
   if (app !== 'plantare') return null;
   const inv = Object.fromEntries(Object.entries(COD).map(([k, v]) => [v, k]));
-  return { plano, camadas: [...(cods || '')].map(c => inv[c]).filter(Boolean), ha: +ha };
+  return { plano, camadas: [...(cods || '')].map(c => inv[c]).filter(Boolean), ha: +cent / 100 };
 }
 
 async function criarCobranca(body, env) {
@@ -68,19 +69,25 @@ async function criarCobranca(body, env) {
     type: 'online', total_amount: valor, external_reference: ref, processing_mode: 'automatic',
     description: 'Plantare Maps · plano ' + (body.plano || '') + ' · ' + p.ha.toFixed(2) + ' ha',
     transactions: { payments: [{ amount: valor, payment_method: { id: 'pix', type: 'bank_transfer' }, expiration_time: env.EXPIRA || 'PT30M' }] },
-    payer: { email }
+    // PAGADOR_TESTE="APRO" só com credencial de teste: o Mercado Pago aprova a order de teste sozinho
+    payer: env.PAGADOR_TESTE ? { email, first_name: env.PAGADOR_TESTE } : { email }
   };
   const r = await fetch(MP + '/v1/orders', { method: 'POST', headers: {
       'content-type': 'application/json', 'accept': 'application/json',
       'authorization': 'Bearer ' + env.MP_ACCESS_TOKEN, 'x-idempotency-key': crypto.randomUUID() },
     body: JSON.stringify(pedido) });
   const d = await r.json().catch(() => ({}));
-  if (!r.ok) return json({ ok: false, motivo: 'O Mercado Pago recusou a cobrança.', detalhe: d && (d.message || (d.errors && d.errors[0] && d.errors[0].message)) || r.status }, 502);
-  const pm = (d.transactions && d.transactions.payments && d.transactions.payments[0] && d.transactions.payments[0].payment_method) || {};
-  return json({ ok: true, id: d.id, status: d.status, valor: p.total, preco: p, cupom: o.cupom,
-    qr_code: pm.qr_code || null, qr_code_base64: pm.qr_code_base64 || null, ticket_url: pm.ticket_url || null,
-    expira: (d.transactions && d.transactions.payments && d.transactions.payments[0] && d.transactions.payments[0].date_of_expiration) || null });
+  if (!r.ok) return json({ ok: false, motivo: 'O Mercado Pago recusou a cobrança.', detalhe: d && (d.message || (d.errors && d.errors[0] && [d.errors[0].message].concat(d.errors[0].details || []).join(' · '))) || r.status }, 502);
+  return json(Object.assign({ ok: true, id: d.id, status: d.status, valor: p.total, preco: p, cupom: o.cupom }, dadosPix(d)));
 }
+
+/* QR / copia e cola da order. A criação pode ser assíncrona (status processing/in_process):
+   aí esses campos chegam vazios e aparecem depois, na consulta de /status. */
+function dadosPix(d) {
+  const pg = (d.transactions && d.transactions.payments && d.transactions.payments[0]) || {}, pm = pg.payment_method || {};
+  return { qr_code: pm.qr_code || null, qr_code_base64: pm.qr_code_base64 || null, ticket_url: pm.ticket_url || null, expira: pg.date_of_expiration || null };
+}
+const ENCERRADOS = ['canceled', 'expired', 'failed', 'refunded', 'charged_back'];
 
 async function consultar(id, env) {
   if (!/^[\w-]{6,64}$/.test(id)) return json({ ok: false, motivo: 'Cobrança inválida.' }, 400);
@@ -90,7 +97,8 @@ async function consultar(id, env) {
   const ref = lerRef(d.external_reference);
   if (!ref) return json({ ok: false, motivo: 'Cobrança não é do Plantare.' }, 404);
   const pago = d.status === 'processed' && (d.status_detail === 'accredited' || !d.status_detail);
-  return json({ ok: true, id: d.id, pago, status: d.status, status_detail: d.status_detail || null, plano: ref.plano, camadas: ref.camadas, ha: ref.ha, valor: +d.total_amount || null });
+  return json(Object.assign({ ok: true, id: d.id, pago, encerrado: !pago && ENCERRADOS.includes(d.status), status: d.status, status_detail: d.status_detail || null,
+    plano: ref.plano, camadas: ref.camadas, ha: ref.ha, valor: +d.total_amount || null }, pago ? {} : dadosPix(d)));
 }
 
 /* x-signature: "ts=...,v1=..."; manifesto "id:{data.id};request-id:{x-request-id};ts:{ts};" com HMAC-SHA256 do segredo.
