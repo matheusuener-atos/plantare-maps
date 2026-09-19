@@ -811,6 +811,10 @@ body.prancha .ux-project{opacity:.7}body.prancha #carimbo{border:0;border-left:1
 .player .leitura{padding-top:10px;border-color:#e2f9d528}.player .leitura b{font-size:12px;font-weight:450}.player .leitura span{font-size:9px;color:#b5caac}
 .player .fechar{border:0;border-bottom:1px solid #d7f0c755;border-radius:0;font-size:11px;padding:5px 0}
 .player select{font-size:11px;border-radius:2px;background:#d9f8c708;border:1px solid #d9f8c722}
+.player .veloc{flex:none;min-width:58px;height:35px;padding:0 10px;font:600 12px var(--f-num);letter-spacing:.02em;color:#e8ffda;border-radius:2px;background:#d9f8c708;border:1px solid #d9f8c733;cursor:pointer;font-variant-numeric:tabular-nums;transition:background .15s,border-color .15s}
+.player .veloc:hover{background:#c8f3b41c;border-color:#c8f3b466}
+.player .veloc.pulo{animation:velocPulo .22s ease-out}
+@keyframes velocPulo{40%{transform:scale(1.12)}}
 .maplibregl-ctrl-top-left{top:227px;left:31px}.maplibregl-ctrl-group{background:rgba(218,255,223,.06)!important;border:1px solid #d5f4cb22;border-radius:2px!important;box-shadow:none!important;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
 .maplibregl-ctrl-group button{width:32px;height:32px}.maplibregl-ctrl-scale{font-size:9px;background:transparent;border-color:#dceccf88;color:#cee1c1}
 .maplibregl-ctrl-attrib{font-size:9px!important;background:#08180d44!important}
@@ -1300,7 +1304,7 @@ dialog.gp{width:min(860px,94vw)}
 <div class="player" id="player">
   <button class="play" id="btPlay" aria-label="Iniciar ou pausar">▶</button>
   <input type="range" id="linhaTempo" min="0" max="1000" step="1" value="0" aria-label="Posição da máquina no percurso">
-  <select id="veloc" aria-label="Velocidade da prévia"><option value="30">30×</option><option value="60" selected>60×</option><option value="200">200×</option><option value="600">600×</option></select>
+  <button type="button" id="veloc" class="veloc" title="Velocidade da prévia: toque para acelerar" aria-label="Velocidade da prévia: 60 vezes. Toque para acelerar">60×</button>
   <div class="leitura">
     <div><b id="rTrecho">—</b><span>trecho</span></div>
     <div><b id="rHa">0,0</b><span>ha aplicados</span></div>
@@ -6732,13 +6736,16 @@ const MAPA={
   balancar(agora, dt){
     const b=this.base; if(!b || this.emVoo) return;
     const t=agora/1000;
-    const mx=Math.sin(t*.19)*45+Math.sin(t*.53)*12, my=Math.cos(t*.14)*35+Math.sin(t*.41)*10;
+    // o balanço entra aos poucos: sem isso a câmera pula (até ~11° e ~50 m) no quadro em que a vista pousa
+    if(b.t0==null) b.t0=agora;
+    const k=Math.min(1,(agora-b.t0)/3500), a=k*k*(3-2*k);
+    const mx=a*(Math.sin(t*.19)*45+Math.sin(t*.53)*12), my=a*(Math.cos(t*.14)*35+Math.sin(t*.41)*10);
     const lat=b.center[1];
     this.map.jumpTo({
       center:[b.center[0]+mx/(111320*Math.cos(lat*RAD)), lat+my/110574],
-      zoom:b.zoom+Math.sin(t*.17)*.035,
-      pitch:b.pitch+Math.sin(t*.23)*1.6+Math.sin(t*.61)*.4,
-      bearing:b.bearing+Math.sin(t*.045)*10+Math.sin(t*.11)*1.4
+      zoom:b.zoom+a*Math.sin(t*.17)*.035,
+      pitch:b.pitch+a*(Math.sin(t*.23)*1.6+Math.sin(t*.61)*.4),
+      bearing:b.bearing+a*(Math.sin(t*.045)*10+Math.sin(t*.11)*1.4)
     });
   },
   irParaRegiao(r, animar){
@@ -7153,7 +7160,7 @@ function enquadrarCaixa(caixa, opts){
   const cam=m.cameraForBounds(caixa,{padding:opts.folga??12, bearing:opts.bearing??m.getBearing()});
   m.setPadding(antes);
   if(!cam) return;
-  const dest={center:cam.center, zoom:Math.min(maxZ, cam.zoom-(opts.pitch>20?.35:0)), padding:alvo,
+  const dest={center:cam.center, zoom:Math.min(maxZ, cam.zoom-(opts.pitch>20?.35:0)+(opts.aproximar||0)), padding:alvo,
     bearing:opts.bearing??m.getBearing(), pitch:opts.pitch??m.getPitch(),
     duration:reduzMov?0:(opts.duration??1000), easing:opts.easing||suaveCam, essential:true};
   if(opts.linear===false) m.flyTo(Object.assign(dest,{curve:opts.curve||1.42})); else m.easeTo(dest);
@@ -7968,7 +7975,14 @@ function atualizarLeitura(){
 }
 $('#btPlay').addEventListener('click',()=>alternarPlay());
 $('#linhaTempo').addEventListener('input',e=>{ E.anim.playing=false; irParaTempo(+e.target.value/1000*E.tab.T); });
-$('#veloc').addEventListener('change',e=>{ E.anim.speed=+e.target.value; });
+/* velocidade: cada toque dobra (60× → 120× → 240× → 480× → 960×) e depois volta a 60× */
+const VELOCIDADES=[60,120,240,480,960];
+$('#veloc').addEventListener('click',e=>{
+  const i=VELOCIDADES.indexOf(E.anim.speed), v=VELOCIDADES[(i+1)%VELOCIDADES.length];
+  E.anim.speed=v; const b=e.currentTarget; b.textContent=v+'×';
+  b.setAttribute('aria-label','Velocidade da prévia: '+v+' vezes. Toque para '+(v===VELOCIDADES[VELOCIDADES.length-1]?'voltar a 60':'acelerar'));
+  b.classList.remove('pulo'); void b.offsetWidth; b.classList.add('pulo');
+});
 $('#btFecharPrevia').addEventListener('click',()=>conferirAprovacao());
 addEventListener('keydown',e=>{
   if(e.target && /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return;
@@ -8548,7 +8562,7 @@ function abrirEdicao(id){
   const primeiro = alvo || revPendentes()[0];
   atualizarPainel();
   if(primeiro) revSelecionar(primeiro.assin);
-  else enquadrar({pitch:0, bearing:0, duration:reduzMov?0:900});
+  else enquadrar({pitch:0, bearing:0, folga:0, aproximar:.3, duration:reduzMov?0:1200});   // prancha: chega um pouco mais perto do talhão
   revTriar();
 }
 function selecionarProblema(id){ const it=revLista().find(x=>x.q.id===id); if(it) revSelecionar(it.assin); }
