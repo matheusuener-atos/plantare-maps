@@ -1,12 +1,18 @@
-# Site do Plantare Maps (arquivos estáticos na Cloudflare).
+# Site do Plantare Maps (app estático na Cloudflare).
 # Publicar:  copie ../plantare-maps.html para public/index.html e rode  npx wrangler deploy  nesta pasta.
 name = "plantare-app"
+main = "src/index.js"
 compatibility_date = "2026-09-01"
 
-# O domínio já está na Cloudflare: o DNS é criado sozinho no deploy
+# Os domínios já estão na Cloudflare: o DNS é criado sozinho no deploy.
+# www e o endereço antigo redirecionam (301) para plantaremaps.com.br (ver src/index.js).
 routes = [
+  { pattern = "plantaremaps.com.br", custom_domain = true },
+  { pattern = "www.plantaremaps.com.br", custom_domain = true },
   { pattern = "plantare.matheusuener.com.br", custom_domain = true }
 ]
 
 [assets]
 directory = "./public"
+binding = "ASSETS"
+run_worker_first = true

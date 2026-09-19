@@ -1,0 +1,8 @@
+Ícones .ico para Windows — Plantare Maps
+Cada arquivo traz 16, 20, 24, 32, 40, 48, 64, 96, 128 e 256 px (256 comprimido em PNG), como o Windows espera.
+
+Pastas: botão direito na pasta > Propriedades > Personalizar > Alterar ícone > Procurar.
+  Sugestão: plantare-maps-colorida-transparente.ico (fica bem sobre o fundo claro do Explorer).
+Programas / atalhos: Propriedades do atalho > Alterar ícone.
+  Sugestão: plantare-maps-colorida-fundo-terra.ico (com fundo, lê melhor na barra de tarefas).
+Instaladores (.exe, Inno Setup, WiX, Electron, .NET <ApplicationIcon>): use qualquer um deles diretamente.

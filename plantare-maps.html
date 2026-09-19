@@ -7076,7 +7076,9 @@ function areaPoligonos(polys) {
   return Math.max(0, t);
 }
 
-/* preço de uma compra: área em ha (2 casas) e lista de camadas; cupom = desconto extra em fração (0..1) */
+/* preço de uma compra: área em ha (2 casas) e lista de camadas.
+   cupom = desconto extra em fração (0..0,9), {fixo: R$} — preço fixo da compra (nunca acima do preço normal) —
+   ou {gratis: true} — compra sem custo (cupom de cortesia) */
 function calcularPreco(areaHa, camadas, cupom) {
   const ha = r2(Math.max(0, +areaHa || 0));
   const lista = [...new Set((camadas || []).filter(c => PRECO.camadas[c] != null))];
@@ -7091,15 +7093,17 @@ function calcularPreco(areaHa, camadas, cupom) {
   }
   total = r2(total);
   const semDesconto = r2(ha * porHa);
-  const c = Math.max(0, Math.min(0.9, +cupom || 0));
-  const comCupom = c ? r2(total * (1 - c)) : total;
-  return { ha, camadas: lista, somaHa, porHa, minimoAplicado: somaHa < PRECO.minimoHa, partes, semDesconto, subtotal: total, cupom: c, total: comCupom };
+  const gratis = !!(cupom && typeof cupom === 'object' && cupom.gratis === true);
+  const fixo = !gratis && cupom && typeof cupom === 'object' && +cupom.fixo > 0 ? r2(+cupom.fixo) : 0;
+  const c = gratis || fixo ? 0 : Math.max(0, Math.min(0.9, +cupom || 0));
+  const comCupom = gratis ? 0 : fixo ? Math.min(total, fixo) : c ? r2(total * (1 - c)) : total;
+  return { ha, camadas: lista, somaHa, porHa, minimoAplicado: somaHa < PRECO.minimoHa, partes, semDesconto, subtotal: total, cupom: c, fixo, gratis, total: comCupom };
 }
 
 /* ---- serviço Pix ----
    Endereço do Worker (pix-worker/). Vazio = checkout demonstrativo, sem cobrança.
    Para testar sem publicar: localStorage.setItem('plantare_pix_api','https://…') */
-const PIX_API_PADRAO='https://pix.matheusuener.com.br';
+const PIX_API_PADRAO='https://pix.plantaremaps.com.br';
 function pixApi(){ let u=''; try{ u=localStorage.getItem('plantare_pix_api')||''; }catch(e){} return (u||PIX_API_PADRAO).replace(/\/+$/,''); }
 /* camadas que cada formato leva; relatório, imagem e projeto são grátis */
 const CAMADAS_TODAS=['linhas_ab','bordadura','percurso','manobras'];
@@ -9626,7 +9630,7 @@ function pgPararEspera(){ if(PG.timer){ clearTimeout(PG.timer); PG.timer=null; }
 function pgMostrarTotal(){
   const p=PG.preco;
   $('#pgItens').innerHTML=p.camadas.length?p.camadas.map(c=>'<span class="pilula">'+esc(NOMES_CAMADAS[c])+' · '+brl(PRECO.camadas[c])+'/ha</span>').join(''):'<span class="pilula">Relatório, imagem e projeto</span>';
-  $('#pgConta').innerHTML=p.total?(fmt(p.ha,2)+' ha × '+brl(p.porHa)+'/ha'+(p.minimoAplicado?' (mínimo)':'')+(p.partes.length>1?' · desconto por área −'+brl(p.semDesconto-p.subtotal):'')+(p.cupom?' · cupom −'+Math.round(p.cupom*100)+'%':'')):'';
+  $('#pgConta').innerHTML=p.total?(fmt(p.ha,2)+' ha × '+brl(p.porHa)+'/ha'+(p.minimoAplicado?' (mínimo)':'')+(p.partes.length>1?' · desconto por área −'+brl(p.semDesconto-p.subtotal):'')+(p.cupom?' · cupom −'+Math.round(p.cupom*100)+'%':'')+(p.fixo?' · cupom: preço fixo':'')):'';
   $('#pgTotal').innerHTML=PG.modo==='gratis'?(p.total&&pagoCobre(PG.id,p.camadas)?'<s>'+brl(p.total)+'</s> já pago':brl(0)):brl(p.total)+(PG.modo==='demo'?' <small class="nota" style="font-family:var(--f-texto);font-weight:400">demonstração</small>':'');
 }
 function abrirPagamento(){
@@ -9643,7 +9647,7 @@ function abrirPagamento(){
   $('#pgPago').hidden=true; $('#pgFechar').disabled=false; $('#pgConcluir').hidden=true; $('#pgConcluir').disabled=false; $('#pgStatus').textContent='';
   $('#pgDemo').hidden=PG.modo!=='demo';
   document.querySelector('#pgDetalhes .cupom').hidden=PG.modo==='gratis'; $('label[for="pgCupom"]').hidden=PG.modo==='gratis';
-  $('#pgEmailBox').hidden=PG.modo!=='pix'; $('#pgGerar').disabled=false; $('#pgGerarMsg').textContent='';
+  $('#pgEmailBox').hidden=PG.modo!=='pix'; $('#pgGerar').disabled=false; $('#pgGerarMsg').textContent=''; $('#pgGerar').textContent='Gerar Pix'; PG.cortesia=false;
   $('#pgPix').hidden=PG.modo==='pix'; $('#pgEspera').hidden=true; $('#pgCopiar').disabled=false;
   $('#pgQr').hidden=PG.modo==='gratis'; document.querySelector('#pgPix .copia').hidden=PG.modo==='gratis';
   $('#pgSimular').hidden=false; $('#pgSimular').disabled=true;
@@ -9664,6 +9668,7 @@ async function pgGerarPix(){
   const email=$('#pgEmail').value.trim();
   if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ $('#pgGerarMsg').textContent='Informe um e-mail válido.'; $('#pgEmail').focus(); return; }
   try{ localStorage.setItem('plantare_email', email); }catch(e){}
+  if(PG.cortesia) return pgConfirmarCortesia(email);
   $('#pgGerar').disabled=true; $('#pgGerarMsg').textContent='Gerando o Pix…';
   try{
     const r=await pgChamar('/cobranca', {plano:PG.id, polys:E.polysLL, camadas:PG.camadas, email, cupom:PG.cupom||undefined});
@@ -9721,13 +9726,31 @@ $('#pgAceite').addEventListener('change',e=>{
   $('#pgDetalhes').hidden=!aceita; $('#pgDetalhes').inert=!aceita; $('#pgSimular').disabled=!aceita||PG.modo==='pix';
   if(aceita) $('#pgDetalhes').classList.add('liberado');
 });
+/* Cupom de cortesia (conferido no Worker): sem Pix. Pede o e-mail, o Worker manda o recibo e o download sai. */
+function pgCortesia(){
+  pgPararEspera(); PG.modo='gratis'; PG.cortesia=true; PG.pedido=null; pgMostrarTotal();
+  $('#pgPix').hidden=true; $('#pgEmailBox').hidden=false;
+  document.querySelector('#pgDetalhes .cupom').hidden=true; $('label[for="pgCupom"]').hidden=true;
+  $('#pgGerar').textContent='Baixar os arquivos'; $('#pgGerar').disabled=false; $('#pgGerarMsg').textContent='';
+  $('#pgCupomMsg').textContent='Cupom de cortesia aplicado: informe seu e-mail para receber o recibo.';
+  $('#pgEmail').focus();
+}
+async function pgConfirmarCortesia(email){
+  $('#pgGerar').disabled=true; $('#pgGerarMsg').textContent='Liberando…';
+  try{
+    const r=await pgChamar('/cortesia', {plano:PG.id, polys:E.polysLL, camadas:PG.camadas, email, cupom:PG.cupom});
+    $('#pgGerarMsg').textContent=r.recibo?'Recibo enviado para '+email+'.':'';
+    pagamentoConfirmado();
+  }catch(e){ $('#pgGerarMsg').textContent=e.message; $('#pgGerar').disabled=false; }
+}
 $('#pgAplicar').addEventListener('click',async()=>{
   const c=$('#pgCupom').value.trim();
   if(!c){ $('#pgCupomMsg').textContent='Digite o código do cupom.'; return; }
   if(PG.modo!=='pix'){ $('#pgCupomMsg').textContent='Cupons valem só no pagamento real.'; return; }
   $('#pgCupomMsg').textContent='Conferindo…';
   try{ const r=await pgChamar('/preco',{polys:E.polysLL, camadas:PG.camadas, cupom:c});
-    if(r.cupom && r.cupom.valido){ PG.cupom=c; PG.preco=r.preco; pgMostrarTotal(); $('#pgCupomMsg').textContent='Cupom aplicado: −'+Math.round(r.cupom.desconto*100)+'%.'; }
+    if(r.cupom && r.cupom.valido && r.cupom.gratis && !r.preco.total){ PG.cupom=c; PG.preco=r.preco; pgCortesia(); }
+    else if(r.cupom && r.cupom.valido){ PG.cupom=c; PG.preco=r.preco; pgMostrarTotal(); $('#pgCupomMsg').textContent=r.cupom.fixo?'Cupom aplicado: esta compra sai por '+brl(r.preco.total)+'.':'Cupom aplicado: −'+Math.round(r.cupom.desconto*100)+'%.'; }
     else { PG.cupom=''; $('#pgCupomMsg').textContent='Cupom não encontrado.'; }
   }catch(e){ $('#pgCupomMsg').textContent=e.message; }
 });

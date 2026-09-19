@@ -28,7 +28,9 @@ export function areaPoligonos(polys) {
   return Math.max(0, t);
 }
 
-/* preço de uma compra: área em ha (2 casas) e lista de camadas; cupom = desconto extra em fração (0..1) */
+/* preço de uma compra: área em ha (2 casas) e lista de camadas.
+   cupom = desconto extra em fração (0..0,9), {fixo: R$} — preço fixo da compra (nunca acima do preço normal) —
+   ou {gratis: true} — compra sem custo (cupom de cortesia) */
 export function calcularPreco(areaHa, camadas, cupom) {
   const ha = r2(Math.max(0, +areaHa || 0));
   const lista = [...new Set((camadas || []).filter(c => PRECO.camadas[c] != null))];
@@ -43,7 +45,9 @@ export function calcularPreco(areaHa, camadas, cupom) {
   }
   total = r2(total);
   const semDesconto = r2(ha * porHa);
-  const c = Math.max(0, Math.min(0.9, +cupom || 0));
-  const comCupom = c ? r2(total * (1 - c)) : total;
-  return { ha, camadas: lista, somaHa, porHa, minimoAplicado: somaHa < PRECO.minimoHa, partes, semDesconto, subtotal: total, cupom: c, total: comCupom };
+  const gratis = !!(cupom && typeof cupom === 'object' && cupom.gratis === true);
+  const fixo = !gratis && cupom && typeof cupom === 'object' && +cupom.fixo > 0 ? r2(+cupom.fixo) : 0;
+  const c = gratis || fixo ? 0 : Math.max(0, Math.min(0.9, +cupom || 0));
+  const comCupom = gratis ? 0 : fixo ? Math.min(total, fixo) : c ? r2(total * (1 - c)) : total;
+  return { ha, camadas: lista, somaHa, porHa, minimoAplicado: somaHa < PRECO.minimoHa, partes, semDesconto, subtotal: total, cupom: c, fixo, gratis, total: comCupom };
 }

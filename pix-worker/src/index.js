@@ -3,12 +3,16 @@
    Rotas
      POST /preco          → orçamento (mesma conta do app; aplica cupom)             {polys, camadas, cupom?}
      POST /cobranca       → cria o Pix e devolve QR / copia-e-cola                    {plano, polys, camadas, email, cupom?}
+     POST /cortesia       → cupom de cortesia: confere, manda recibo e cópia por e-mail {plano, polys, camadas, email, cupom}
      GET  /status/:id     → consulta a order no Mercado Pago (pago ou não)
      POST /webhook        → aviso do Mercado Pago (assinatura x-signature conferida)
      GET  /saude          → teste rápido
 
    Segredos (wrangler secret put …):  MP_ACCESS_TOKEN, MP_WEBHOOK_SECRET
-   Variáveis (wrangler.toml [vars]):   ORIGENS (lista separada por vírgula), CUPONS (JSON {"CODIGO":0.1}),
+   Segredos opcionais:                 CUPONS (JSON {"CODIGO":0.1, "OUTRO":{"fixo":2}, "AMIGO":{"gratis":true}}) — fica fora do repositório
+                                       AVISO_EMAIL (quem recebe a cópia de cada cortesia)
+   E-mail (binding EMAIL, Cloudflare Email Service): remetente EMAIL_DE ([vars]); se falhar, o download não trava
+   Variáveis (wrangler.toml [vars]):   ORIGENS (lista separada por vírgula),
                                        EXPIRA (ISO 8601, padrão PT30M), PAGADOR_TESTE (só em teste: "APRO")
    Regras de segurança
      · o preço é calculado AQUI, a partir do polígono do talhão (a área que o navegador manda não vale);
@@ -42,9 +46,12 @@ function orcar(body, env) {
   const ha = areaPoligonos(body.polys) / 1e4;
   if (ha > PRECO.areaMaxHa) return { erro: 'Área acima do limite para compra online. Fale com a gente.' };
   const cod = String(body.cupom || '').trim().toUpperCase(), cupons = cuponsDe(env);
-  const desc = cod && cupons[cod] != null ? +cupons[cod] : 0;
-  const p = calcularPreco(ha, body.camadas, desc);
-  return { preco: p, cupom: cod ? { codigo: cod, valido: desc > 0, desconto: desc } : null };
+  const val = cod ? cupons[cod] : undefined;   // 0.10 = 10% de desconto; {"fixo":2} = compra por R$ 2,00; {"gratis":true} = cortesia
+  const gratis = !!(val && typeof val === 'object' && val.gratis === true);
+  const fixo = !gratis && val && typeof val === 'object' && +val.fixo > 0 ? +val.fixo : 0;
+  const desc = !gratis && !fixo && val != null ? +val || 0 : 0;
+  const p = calcularPreco(ha, body.camadas, gratis ? { gratis } : fixo ? { fixo } : desc);
+  return { preco: p, cupom: cod ? { codigo: cod, valido: gratis || fixo > 0 || desc > 0, desconto: desc, fixo: fixo || null, gratis } : null };
 }
 /* referência curta que volta no status: plantare-plano-camadas-centésimos de ha (ex.: plantare-1LKP5C-ABP-282).
    A Orders API só aceita letras, números, - e _ (máx. 64). */
@@ -88,6 +95,32 @@ function dadosPix(d) {
   return { qr_code: pm.qr_code || null, qr_code_base64: pm.qr_code_base64 || null, ticket_url: pm.ticket_url || null, expira: pg.date_of_expiration || null };
 }
 const ENCERRADOS = ['canceled', 'expired', 'failed', 'refunded', 'charged_back'];
+
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+async function enviarEmail(env, msg) {
+  if (!env.EMAIL || !msg.to) return false;
+  try { await env.EMAIL.send(Object.assign({ from: env.EMAIL_DE || 'nao-responda@plantaremaps.com.br' }, msg)); return true; }
+  catch (e) { console.log('e-mail não enviado', e && (e.code || e.message)); return false; }
+}
+
+/* Cupom de cortesia: o preço zerado é conferido aqui (não confia no navegador). Sem Mercado Pago.
+   Manda recibo para quem pediu e cópia para AVISO_EMAIL; falha de e-mail não impede o download. */
+async function cortesia(body, env) {
+  const o = orcar(body, env); if (o.erro) return json({ ok: false, motivo: o.erro }, 400);
+  if (!o.cupom || !o.cupom.gratis) return json({ ok: false, motivo: 'Cupom de cortesia inválido.' }, 400);
+  const email = String(body.email || '').trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) return json({ ok: false, motivo: 'Informe um e-mail válido para receber o recibo.' }, 400);
+  const p = o.preco, plano = String(body.plano || '').replace(/[^A-Za-z0-9]/g, '').slice(0, 16) || 'plano';
+  const camadas = p.camadas.map(c => NOMES_CAMADAS[c]).join(', ') || 'relatório, imagem e projeto';
+  const quando = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+  const linhas = ['Plano #' + plano, p.ha.toFixed(2).replace('.', ',') + ' ha', 'Camadas: ' + camadas, 'Cupom de cortesia: ' + o.cupom.codigo, 'Valor: R$ 0,00', quando];
+  const recibo = await enviarEmail(env, { to: email, subject: 'Plantare Maps · seu plano #' + plano,
+    text: 'Obrigado por testar o Plantare Maps!\n\n' + linhas.join('\n') + '\n\nConfira divisas, obstáculos e raio de giro no campo antes de aplicar.',
+    html: '<p>Obrigado por testar o <b>Plantare Maps</b>!</p><p>' + linhas.map(esc).join('<br>') + '</p><p>Confira divisas, obstáculos e raio de giro no campo antes de aplicar.</p>' });
+  await enviarEmail(env, { to: env.AVISO_EMAIL, subject: 'Cortesia usada · ' + o.cupom.codigo + ' · ' + email,
+    text: [email].concat(linhas, 'Recibo enviado: ' + (recibo ? 'sim' : 'não')).join('\n') });
+  return json({ ok: true, plano, camadas: p.camadas, recibo });
+}
 
 async function consultar(id, env) {
   if (!/^[\w-]{6,64}$/.test(id)) return json({ ok: false, motivo: 'Cobrança inválida.' }, 400);
@@ -136,6 +169,7 @@ export default {
     if (!c.permitida) return json({ ok: false, motivo: 'Origem não autorizada.' }, 403);
     try {
       if (rota === '/preco' && req.method === 'POST') { const o = orcar(await req.json(), env); return json(o.erro ? { ok: false, motivo: o.erro } : Object.assign({ ok: true }, o), o.erro ? 400 : 200, c.headers); }
+      if (rota === '/cortesia' && req.method === 'POST') { const r = await cortesia(await req.json(), env); return new Response(r.body, { status: r.status, headers: Object.assign({}, Object.fromEntries(r.headers), c.headers) }); }
       if (rota === '/cobranca' && req.method === 'POST') { const r = await criarCobranca(await req.json(), env); return new Response(r.body, { status: r.status, headers: Object.assign({}, Object.fromEntries(r.headers), c.headers) }); }
       const m = rota.match(/^\/status\/([^/]+)$/);
       if (m && req.method === 'GET') { const r = await consultar(decodeURIComponent(m[1]), env); return new Response(r.body, { status: r.status, headers: Object.assign({}, Object.fromEntries(r.headers), c.headers) }); }
