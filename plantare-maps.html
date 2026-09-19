@@ -1311,7 +1311,7 @@ dialog.gp{width:min(860px,94vw)}
 <div class="ux-home-caption" aria-hidden="true"><span>DA DIVISA AO PERCURSO.</span><span>PLANTARE / MAPS</span></div>
 
 <aside class="painel" id="painel" aria-live="polite">
-  <button type="button" class="alca" id="alca" aria-controls="painelCorpo" aria-expanded="true" aria-label="Recolher o painel"><i></i><span>Mostrar detalhes</span></button>
+  <button type="button" class="alca" id="alca" aria-controls="painelCorpo" aria-expanded="true" aria-label="Recolher o painel"><i></i></button>
   <div class="rolagem" id="painelCorpo"></div>
   <div class="rodape-painel" id="painelRodape" hidden></div>
 </aside>
@@ -12841,7 +12841,6 @@ dialog.pergunta .acoes .btn{min-height:42px;padding:0 18px;font-size:13.5px}
   <div class="acoes"><button type="button" class="btn btn-fio" id="perguntaNao">Cancelar</button><button type="button" class="btn btn-luz" id="perguntaSim">OK</button></div>
 </dialog>
 <style id="painel-recolher">
-.painel .alca span{display:none}
 @media(max-width:760px){
   .painel .alca{cursor:pointer;min-height:26px;padding:9px 0 6px!important;display:flex!important;flex-direction:column;align-items:center;gap:6px;background:transparent;border:0;color:#cfe3c6;-webkit-tap-highlight-color:transparent}
   .painel .alca i{transition:width .2s,background .2s}
@@ -12849,7 +12848,6 @@ dialog.pergunta .acoes .btn{min-height:42px;padding:0 18px;font-size:13.5px}
   .painel .alca:focus-visible{outline:0}
   .painel.recolhido{max-height:none}
   .painel.recolhido .rolagem{display:none}
-  .painel.recolhido .alca span{display:block;font:600 9px var(--f-num);letter-spacing:.16em;text-transform:uppercase;color:#bcd3b2}
   .painel.recolhido .alca{padding-bottom:2px!important}
   .painel.recolhido .rodape-painel{padding-top:8px}
 }
