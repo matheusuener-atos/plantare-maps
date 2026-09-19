@@ -1296,7 +1296,7 @@ dialog.gp{width:min(860px,94vw)}
 <div class="ux-home-caption" aria-hidden="true"><span>DA DIVISA AO PERCURSO.</span><span>PLANTARE / MAPS</span></div>
 
 <aside class="painel" id="painel" aria-live="polite">
-  <button class="alca" id="alca" aria-label="Recolher ou abrir o painel"><i></i></button>
+  <button type="button" class="alca" id="alca" aria-controls="painelCorpo" aria-expanded="true" aria-label="Recolher o painel"><i></i><span>Mostrar detalhes</span></button>
   <div class="rolagem" id="painelCorpo"></div>
   <div class="rodape-painel" id="painelRodape" hidden></div>
 </aside>
@@ -7140,12 +7140,13 @@ function areaPoly(r){ let A2=0; for(let i=0,j=r.length-1;i<r.length;j=i++) A2+=(
 function coberturaInferior(){
   let topo=innerHeight;
   for(const el of [document.getElementById('painel'), document.querySelector('.player.aberto')]){
-    if(!el || el.offsetParent===null) continue; const r=el.getBoundingClientRect(); if(r.height>0 && r.top<topo) topo=r.top; }
+    if(!el || !el.getClientRects().length || getComputedStyle(el).visibility==='hidden') continue; /* offsetParent é sempre null em position:fixed */ const r=el.getBoundingClientRect(); if(r.height>0 && r.top<topo) topo=r.top; }
   return innerHeight-topo;
 }
 function margens(){
   const movel=innerWidth<760;
-  return movel ? {top:150,bottom:Math.min(Math.round(innerHeight*.62), Math.max(Math.round(coberturaInferior())+34, document.body.classList.contains('ux-previa')?96:Math.round(innerHeight*.52)+16)),left:28,right:62}
+  const recolhido=movel && document.getElementById('painel').classList.contains('recolhido');
+  return movel ? {top:150,bottom:Math.min(Math.round(innerHeight*.62), Math.max(Math.round(coberturaInferior())+34, (recolhido||document.body.classList.contains('ux-previa'))?96:Math.round(innerHeight*.52)+16)),left:28,right:62}
                : {top:80,bottom:80,left:90,right:Math.min(460,Math.round(innerWidth*.42))};
 }
 const SEM_PADDING={top:0,bottom:0,left:0,right:0};
@@ -8046,6 +8047,9 @@ function nomeDoPontoAtual(){
   return p ? p.nome.replace(/^Lado /,'lado ').replace(/^Seu ponto$/,'ponto escolhido por você') : (E.abastSugerido?'ponto sugerido':'ponto escolhido por você');
 }
 function atualizarPainel(){
+  { const tela=E.passo==='plano'?(E.edicao?'revisao':E.guia||'plano'):E.passo; const pn=document.getElementById('painel'); if(tela!==pn.dataset.tela){ pn.dataset.tela=tela; if($('#painel').classList.contains('recolhido')){ painelRecolher(false, true);
+      // se a etapa nova não mexer na câmera, o mapa devolve o espaço ao painel
+      requestAnimationFrame(()=>requestAnimationFrame(()=>{ const m=MAPA.map; if(m && !m.isMoving() && !E.vitrine && !fluxoOcupado()) m.easeTo({padding:margens(), duration:reduzMov?0:500, easing:suaveCam}); })); } } }
   const c=$('#painelCorpo'); if(!E.polysLL){ c.innerHTML=''; uxAtualizar(); return; }
   const et=E.etapa;
   let h='', rodape='';
@@ -8308,7 +8312,24 @@ $('#painel').addEventListener('pointerover',e=>{
   const t=m.querySelector('span').textContent;
   if(/passadas|cobertura/.test(t)) pulsarLinhas();
 });
-$('#alca').addEventListener('click',()=>$('#painel').classList.toggle('baixo'));
+$('#alca').addEventListener('click',()=>{
+  if(document.body.classList.contains('ux-previa')){ $('#painel').classList.toggle('baixo'); return; }   // prévia: comportamento próprio
+  painelRecolher(!$('#painel').classList.contains('recolhido'));
+});
+/* celular: recolhido, o painel mostra só a alça e o botão de ação; o mapa ganha o espaço (e devolve ao abrir) */
+function painelRecolher(liga, semMapa){
+  const p=$('#painel'); if(liga && innerWidth>=760) liga=false;
+  if(p.classList.contains('recolhido')===liga) return;
+  p.classList.toggle('recolhido', liga);
+  $('#alca').setAttribute('aria-expanded', String(!liga)); $('#alca').setAttribute('aria-label', liga?'Mostrar o painel':'Recolher o painel');
+  if(semMapa || !MAPA.map || !E.polysLL) return;
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{   // depois do novo tamanho do painel
+    const m=MAPA.map;
+    if(E.vitrine){ const pd=paddingVitrine(); pd.bottom=Math.round(coberturaInferior()); m.easeTo({padding:pd, duration:reduzMov?0:650, easing:suaveCam}); return; }
+    if(E.edicao || fluxoOcupado()){ m.easeTo({padding:margens(), duration:reduzMov?0:650, easing:suaveCam}); return; }   // mantém o foco atual, só desloca
+    enquadrar({duration:reduzMov?0:700});
+  }));
+}
 
 const saltoPreciso=()=>Math.max(1, Math.ceil((2*Math.max(E.P.rMin,0.5))/Math.max(E.P.esp,0.5) - 0.001));
 const pularRecomendado=()=>saltoPreciso()>1;
@@ -12804,6 +12825,20 @@ dialog.pergunta .acoes .btn{min-height:42px;padding:0 18px;font-size:13.5px}
   <h2 id="perguntaTitulo"></h2><p id="perguntaTexto"></p>
   <div class="acoes"><button type="button" class="btn btn-fio" id="perguntaNao">Cancelar</button><button type="button" class="btn btn-luz" id="perguntaSim">OK</button></div>
 </dialog>
+<style id="painel-recolher">
+.painel .alca span{display:none}
+@media(max-width:760px){
+  .painel .alca{cursor:pointer;min-height:26px;padding:9px 0 6px!important;display:flex!important;flex-direction:column;align-items:center;gap:6px;background:transparent;border:0;color:#cfe3c6;-webkit-tap-highlight-color:transparent}
+  .painel .alca i{transition:width .2s,background .2s}
+  .painel .alca:hover i,.painel .alca:focus-visible i{width:44px;background:#d7f5c8cc}
+  .painel .alca:focus-visible{outline:0}
+  .painel.recolhido{max-height:none}
+  .painel.recolhido .rolagem{display:none}
+  .painel.recolhido .alca span{display:block;font:600 9px var(--f-num);letter-spacing:.16em;text-transform:uppercase;color:#bcd3b2}
+  .painel.recolhido .alca{padding-bottom:2px!important}
+  .painel.recolhido .rodape-painel{padding-top:8px}
+}
+</style>
 <style id="nome-gestos">
 /* nome do talhão: reticências e renomear no clique */
 #uxFieldName{pointer-events:auto;cursor:text;max-width:min(100%,560px);border-bottom:1px dashed transparent;transition:border-color .2s}
