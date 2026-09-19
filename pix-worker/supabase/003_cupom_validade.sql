@@ -31,11 +31,11 @@ values ('1SAMUEL712', true, true)
 on conflict (codigo) do update
   set gratis = true, desconto = null, fixo = null, ativo = true, validade = null;
 
--- inauguração: 30% de desconto por 30 dias a partir de agora (uma vez por conta)
-insert into public.cupons (codigo, desconto, validade, ativo)
-values ('BEMVINDO30', 0.30, now() + interval '30 days', true)
+-- inauguração: cortesia (sai sem custo) que vale por 30 dias a partir de agora (uma vez por conta)
+insert into public.cupons (codigo, gratis, validade, ativo)
+values ('BEMVINDO30', true, now() + interval '30 days', true)
 on conflict (codigo) do update
-  set desconto = 0.30, fixo = null, gratis = false, validade = now() + interval '30 days', ativo = true;
+  set gratis = true, desconto = null, fixo = null, validade = now() + interval '30 days', ativo = true;
 
 select codigo, gratis, desconto, fixo, ativo, usos_max, to_char(validade at time zone 'America/Sao_Paulo', 'DD/MM/YYYY HH24:MI') as validade
 from public.cupons order by criado_em;
