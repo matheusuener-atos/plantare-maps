@@ -22,7 +22,7 @@ import path from 'node:path';
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
 const APP = path.join(AQUI, '..', 'plantare-maps.html');
 const TALHOES = path.join(AQUI, 'talhoes');
-const PORTA = 8799;
+let PORTA = 0;   // porta livre escolhida na hora: dá para rodar duas vezes ao mesmo tempo
 
 /* combinações que exercitam os caminhos que mais brigam entre si */
 const CASOS = [
@@ -37,8 +37,10 @@ const servidor = http.createServer((q, r) => {
   if (q.url === '/' || q.url.startsWith('/?')) { r.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); r.end(readFileSync(APP)); }
   else { r.writeHead(404); r.end(); }
 });
-await new Promise(ok => servidor.listen(PORTA, ok));
+await new Promise(ok => servidor.listen(0, '127.0.0.1', ok));
+PORTA = servidor.address().port;
 
+console.log('Gerando os planos num Chrome sem janela. Cada combinação leva de alguns segundos a alguns minutos.\n');
 const talhoes = readdirSync(TALHOES).filter(f => /\.(kml|kmz|json)$/i.test(f));
 if (!talhoes.length) { console.log('Nenhum talhão em testes/talhoes/. Copie um .kml para lá.'); servidor.close(); process.exit(0); }
 
@@ -51,11 +53,13 @@ for (const arquivo of talhoes) {
     const pg = await ctx.newPage();
     const erros = []; pg.on('pageerror', e => erros.push(e.message));
     const rot = arquivo + ' · ' + caso.nome;
+    const t0 = Date.now();
+    process.stdout.write('  ▸ ' + rot.padEnd(46));
     try {
-      await pg.goto('http://localhost:' + PORTA + '/');
+      await pg.goto('http://127.0.0.1:' + PORTA + '/');
       await pg.waitForFunction(() => typeof MAPA !== 'undefined' && MAPA.pronto, null, { timeout: 60000 });
       await pg.setInputFiles('#arquivo', path.join(TALHOES, arquivo));
-      await pg.waitForFunction(() => E.passo === 'direcao' && E.opcoes && E.opcoes.length && !VOO.ativo, null, { timeout: 180000 });
+      await pg.waitForFunction(() => E.passo === 'direcao' && E.opcoes && E.opcoes.length && !VOO.ativo, null, { timeout: 420000 });   // talhão grande demora a analisar
       await pg.evaluate(() => { const b = document.querySelector('#painelCorpo [data-opcao]'); if (b) b.click(); });
       await pg.evaluate(() => irParaPonto());
       await pg.waitForFunction(() => E.pontoSel && !E.comparando, null, { timeout: 240000 });
@@ -91,10 +95,12 @@ for (const arquivo of talhoes) {
       if (erros.length) erra.push('erro de JavaScript: ' + erros[0]);
 
       linhas.push({ rot, ok: !erra.length, legs: r.legs, falha: +(+r.falha).toFixed(1), sobrep: +(+r.sobrep).toFixed(1), erra, fora: r.fora });
+      console.log((erra.length ? 'FALHA' : 'ok   ') + '  (' + Math.round((Date.now() - t0) / 1000) + ' s)');
       if (erra.length) falhas.push(rot + ' → ' + erra.join(' · '));
     } catch (e) {
       linhas.push({ rot, ok: false, erra: ['não gerou: ' + String(e.message).slice(0, 80)], fora: [] });
       falhas.push(rot + ' → não gerou o plano');
+      console.log('FALHA  (' + Math.round((Date.now() - t0) / 1000) + ' s)');
     }
     await ctx.close();
   }

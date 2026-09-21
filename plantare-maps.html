@@ -4543,7 +4543,12 @@ function pl4Suave(D, R){
 /* ---------- preparação por direção: anéis, retas e desvios ---------- */
 function pl4Direcao(c, P, u, abast, abOrigem){
   const base=pl4Campo(c,P); if(!base.ok) return {erro:'estreito'};
-  const Q=base.Q;
+  /* O campo preparado fica em cache por geometria (faixa, espaçamento, folga, raio, bordadura).
+     As opções de comportamento não entram nessa chave, então o Q guardado ali é o da primeira
+     geração da sessão: sem isto, trocar 'dar a volta' por 'desviar' não mudava nada no plano. */
+  const Q=Object.assign({}, base.Q, {voltaObst:!!P.voltaObstaculo, corte:P.corteSecao!==false,
+    empurrao:P.empurrao==='direto'?'direto':'gradual',
+    limDesvio:P.obstGrande>0?P.obstGrande:2.2*(P.esp||P.faixa)});
   u=unit(u);
   let n=[-u[1],u[0]];
   const anelM=base.anelM;
@@ -4609,7 +4614,9 @@ function pl4Direcao(c, P, u, abast, abOrigem){
   for(const s of segs){
     const e=emp.get(s.k);
     s.pts=pl4Tracar(s, e, pt);
-    if(e) s.contornos=e.nObs||1;
+    // traçado refeito: as marcas da geração anterior não valem mais (elas sobreviviam ao cache
+    // e uma volta completa antiga continuava marcada mesmo com 'desviar e seguir' escolhido)
+    s.voltas=0; s.contornos=e?(e.nObs||1):0;
   }
   // volta completa em obstáculo pequeno (opcional): a reta mais rente dá a volta nele
   if(Q.voltaObst) for(const o of pequenos) pl4VoltaPequeno(Q, o, segs, c, P);
