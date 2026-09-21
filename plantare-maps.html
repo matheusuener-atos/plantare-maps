@@ -6577,10 +6577,12 @@ function aplicarCena(agora){
   }
   const s=solDaCena(), tr=tratamento(s), w=TEMPOS[tempoAtual()], fx=CENA.fx;
   luzesNoturnas(Math.max(0,Math.min(1,(-2-s.alt)/10))*fx);   // noite: sol 2° a 12° abaixo do horizonte
-  // o escurecimento artificial sai conforme as luzes da NASA aparecem: entra rápido, volta devagar
+  /* O escurecimento artificial só sai depois que as luzes da NASA estão mesmo desenhadas, e mesmo assim
+     não sai todo (fica um quarto dele). Se faltar tile, ele volta no mesmo quadro: melhor um mapa escuro
+     de mais do que o mapa de dia aparecendo no meio do voo. */
   const pronto=MAPA.luzesOk?1:0;
-  MAPA.luzesF = MAPA.luzesF==null ? pronto : MAPA.luzesF + (pronto-MAPA.luzesF)*(pronto>MAPA.luzesF?.12:.02);
-  const la=(luzesNoturnas.a||0)*MAPA.luzesF;
+  MAPA.luzesF = MAPA.luzesF==null ? pronto : (pronto<MAPA.luzesF ? pronto : MAPA.luzesF+(1-MAPA.luzesF)*.05);
+  const la=(luzesNoturnas.a||0)*MAPA.luzesF*.75;
   const brilhoMapa=lerp(1, tr.b*w.b, fx*(1-la)), sat=lerp(1, tr.s*w.s, fx*(1-la));
   const cvMapa=document.querySelector('#mapa .maplibregl-canvas');
   const desf=(w.gotas||0)*fx*(reduzMov?0:1);
