@@ -1301,6 +1301,7 @@ dialog.gp{width:min(860px,94vw)}
   <label><input type="checkbox" data-ux-layer="manobras" checked><i style="--swatch:#E9B45A"></i>Manobras</label>
   <label><input type="checkbox" data-ux-layer="bord" checked><i style="--swatch:#5BE38A"></i>Bordadura</label>
   <label><input type="checkbox" data-ux-layer="obst" checked><i style="--swatch:#FF7A6B"></i>Obstáculos</label>
+  <label class="ux-layer-so"><input type="checkbox" data-ux-layer="percurso"><i style="--swatch:#C9A2FF"></i>Percurso (o caminho inteiro)</label>
 </div>
 <div class="ux-project-actions" id="uxProjectActions" hidden>
   <button type="button" id="uxEditArea"><svg viewBox="0 0 24 24"><path d="M4 18 7 6l10 2 2 9-10 2zM7 6l2 13"/></svg><span>Editar área</span></button>
@@ -6861,7 +6862,7 @@ function iniciarMapa(){
     map.addLayer({id:'luzes', type:'raster', source:'luzes', layout:{visibility:'visible'}, paint:{'raster-opacity':0, 'raster-fade-duration':180}});
     map.on('sourcedata', e=>{ if(e.sourceId==='luzes') MAPA.luzesOk=map.isSourceLoaded('luzes'); });
     const add=(id)=>map.addSource(id,{type:'geojson', data:VAZIO});
-    ['cerca','cercaParcial','obst','anel','previa','lateral','cob','cobParcial','rastro','rastroParcial','bord','linhas','manobras','cabeca','barra','avisos','problema','proposta','probPonto'].forEach(add);
+    ['cerca','cercaParcial','obst','anel','previa','lateral','cob','cobParcial','rastro','rastroParcial','bord','linhas','manobras','percurso','cabeca','barra','avisos','problema','proposta','probPonto'].forEach(add);
     const L=(o)=>map.addLayer(o);
     map.addSource('grade',{type:'geojson', data:VAZIO});
     L({id:'grade-menor',type:'line',source:'grade',filter:['==',['get','maior'],false],layout:{visibility:'none'},paint:{'line-color':'#FFFFFF','line-opacity':.07,'line-width':1}});
@@ -6878,6 +6879,7 @@ function iniciarMapa(){
     L({id:'previa',type:'line',source:'previa',paint:{'line-color':COR.linha,'line-width':1.3,'line-opacity':.8,'line-dasharray':[3,2]}});
     L({id:'lateral',type:'line',source:'lateral',layout:{'line-cap':'round'},paint:{'line-color':COR.lateral,'line-width':6,'line-opacity':.9}});
     L({id:'manobras',type:'line',source:'manobras',layout:{'line-join':'round'},paint:{'line-color':COR.manobra,'line-width':1.8,'line-opacity':['case',['==',['get','tipo'],'retorno'],.6,.9]}});
+    L({id:'percurso',type:'line',source:'percurso',layout:{'line-join':'round','line-cap':'round',visibility:'none'},paint:{'line-color':'#C9A2FF','line-width':2.6,'line-opacity':.95}});
     L({id:'linhas-brilho',type:'line',source:'linhas',paint:{'line-color':COR.luz,'line-width':7,'line-blur':6,'line-opacity':0}});
     L({id:'linhas',type:'line',source:'linhas',layout:{'line-join':'round'},paint:{'line-color':['case',['boolean',['get','contorno'],false],'#9FE3B8',['boolean',['get','repasse'],false],'#C9A2FF',COR.linha],'line-width':['case',['boolean',['get','contorno'],false],2.4,['boolean',['get','repasse'],false],2.4,1.7]}});
     L({id:'bord',type:'line',source:'bord',layout:{'line-join':'round'},paint:{'line-color':COR.luz,'line-width':2.6}});
@@ -7890,7 +7892,7 @@ function desenharPlano(modo){
       if(t>T0+T1*.6){ fonte('manobras', manF); MAPA.map.setPaintProperty('manobras','line-opacity',
         ['*',Math.min(1,(t-T0-T1*.6)/900),['case',['==',['get','tipo'],'retorno'],.6,.9]]); }
       if(t<total) requestAnimationFrame(passo);
-      else { fonte('cabeca'); mostrarMetricas(); pulsarLinhas(); res(); }
+      else { fonte('cabeca'); if(typeof percursoFonte==='function') percursoFonte(); mostrarMetricas(); pulsarLinhas(); res(); }
     };
     passo();
   });
@@ -8142,36 +8144,40 @@ function bussola(rumo){
 /* Miniaturas da etapa 03: desenho esquemático, sempre igual, para a pessoa reconhecer
    do que se está falando (cada região chama as manobras de um jeito). */
 const PREF_ARTE=(()=>{
-  const cv='0 0 96 60', L='#EDF0E6', M='#E9B45A', V='#8DF2B0', O='#FF7A6B';
+  const cv='0 0 96 60', L='#EDF0E6', M='#E9B45A', V='rgba(141,242,176,.26)', V2='rgba(141,242,176,.6)', O='#FF7A6B', T='rgba(150,116,74,.45)';
   const svg=g=>'<svg viewBox="'+cv+'" aria-hidden="true" fill="none" stroke-linecap="round" stroke-linejoin="round">'+g+'</svg>';
-  const linha=(x,y1,y2,cor)=>'<path d="M'+x+' '+y1+'V'+y2+'" stroke="'+(cor||L)+'" stroke-width="2.4"/>';
-  const man=d=>'<path d="'+d+'" stroke="'+M+'" stroke-width="2.4"/>';
-  const duas=(x1,x2)=>linha(x1,56,26)+linha(x2,26,56);
+  const linha=(x,y1,y2)=>'<path d="M'+x+' '+y1+'V'+y2+'" stroke="'+L+'" stroke-width="2.4"/>';
+  const duas=()=>linha(28,56,34)+linha(68,34,56);                       // as duas linhas vizinhas, vistas de cima
+  const man=(d,traco)=>'<path d="'+d+'" stroke="'+M+'" stroke-width="2.4"'+(traco?' stroke-dasharray="3 4" opacity=".45"':'')+'/>';
+  const faixa=(x,w,cor)=>'<rect x="'+x+'" y="30" width="'+w+'" height="30" fill="'+(cor||V)+'"/>';   // faixa aplicada
+  const U='M28 34A20 20 0 0 1 68 34';                                   // meia-volta
+  const GOTA='M28 34C28 18 8 20 10 31C12 42 32 40 46 33C54 29 60 28 68 34';   // laço que cruza o aplicado
+  const GUARDA='M28 34C28 28 18 26 18 31C18 36 26 38 32 32C38 26 38 16 50 16C62 16 68 26 68 34';   // gancho com barriguinha
   return {
-    // manobras entre duas linhas (a linha aplicada em branco, a manobra em amarelo)
-    // automática: a mais curta que couber — a meia-volta cheia, com a gota tracejada atrás
-    auto: svg(duas(28,68)+'<path d="M28 26C28 2 74 8 62 22A13 13 0 1 1 68 26" stroke="'+M+'" stroke-width="2" stroke-dasharray="3 4" opacity=".5"/>'+man('M28 26A20 20 0 0 1 68 26')),
-    u: svg(duas(28,68)+man('M28 26A20 20 0 0 1 68 26')),
-    gota: svg(duas(28,68)+man('M28 26C28 2 74 8 62 22A13 13 0 1 1 68 26')),
-    guarda: svg(duas(28,68)+man('M28 30Q18 30 20 22Q22 16 28 20A20 20 0 0 1 68 26')),
+    auto: svg(duas()+man(GOTA,true)+man(U)),
+    u: svg(duas()+man(U)),
+    gota: svg(duas()+man(GOTA)),
+    guarda: svg(duas()+man(GUARDA)),
+    // manobra por cima do que já foi aplicado: a faixa verde é o que a barra já molhou
+    podePassa: svg(faixa(16,24)+faixa(56,24)+linha(28,60,30)+linha(68,60,30)
+      +man('M28 30C28 16 6 18 8 30C10 44 30 46 44 36C54 30 60 28 68 30')),
+    naoPassa: svg(faixa(16,24)+faixa(56,24)+linha(28,60,30)+linha(68,60,30)+man('M28 30A20 20 0 0 1 68 30')),
+    // duas passadas lado a lado: sobrepostas, encostadas ou com falha entre elas
+    sobrepor: svg(faixa(10,42)+faixa(44,42)+'<rect x="44" y="30" width="8" height="30" fill="'+V2+'"/>'+linha(31,60,30)+linha(65,60,30)),
+    equilibrado: svg(faixa(12,36)+faixa(48,36)+linha(30,60,30)+linha(66,60,30)
+      +'<path d="M48 28V62" stroke="rgba(141,242,176,.8)" stroke-width="1.4" stroke-dasharray="3 3"/>'),
+    falhar: svg(faixa(10,34)+faixa(52,34)+'<rect x="44" y="30" width="8" height="30" fill="'+T+'"/>'
+      +'<rect x="44" y="30" width="8" height="30" fill="none" stroke="'+O+'" stroke-width="1.6" stroke-dasharray="3 3"/>'+linha(27,60,30)+linha(69,60,30)),
     // obstáculo no meio do talhão
     desviar: svg('<circle cx="48" cy="30" r="9" fill="rgba(255,122,107,.25)" stroke="'+O+'" stroke-width="2"/>'
       +'<path d="M8 16H88M8 44H88" stroke="'+L+'" stroke-width="2.2"/>'
-      +'<path d="M8 30H30A6 6 0 0 0 36 24A6 6 0 0 1 42 18M54 18A6 6 0 0 1 60 24A6 6 0 0 0 66 30H88" stroke="'+M+'" stroke-width="2.4"/>'),
+      +man('M8 30H30A6 6 0 0 0 36 24A6 6 0 0 1 42 18M54 18A6 6 0 0 1 60 24A6 6 0 0 0 66 30H88')),
     volta: svg('<circle cx="48" cy="30" r="9" fill="rgba(255,122,107,.25)" stroke="'+O+'" stroke-width="2"/>'
-      +'<path d="M8 16H88M8 44H88" stroke="'+L+'" stroke-width="2.2"/>'
-      +'<path d="M8 30H33" stroke="'+L+'" stroke-width="2.2"/><path d="M63 30H88" stroke="'+L+'" stroke-width="2.2"/>'
+      +'<path d="M8 16H88M8 44H88M8 30H33M63 30H88" stroke="'+L+'" stroke-width="2.2"/>'
       +'<circle cx="48" cy="30" r="15" stroke="'+M+'" stroke-width="2.4" stroke-dasharray="3 3"/>'),
     limPeq: svg('<path d="M10 12H86M10 30H86M10 48H86" stroke="'+L+'" stroke-width="2.2"/><circle cx="48" cy="30" r="5" fill="rgba(255,122,107,.3)" stroke="'+O+'" stroke-width="2"/>'),
-    limMed: svg('<path d="M10 12H86M10 48H86" stroke="'+L+'" stroke-width="2.2"/><path d="M10 30H32M64 30H86" stroke="'+L+'" stroke-width="2.2"/><circle cx="48" cy="30" r="11" fill="rgba(255,122,107,.3)" stroke="'+O+'" stroke-width="2"/>'),
-    limGra: svg('<path d="M10 12H86" stroke="'+L+'" stroke-width="2.2"/><path d="M10 30H26M70 30H86M10 48H26M70 48H86" stroke="'+L+'" stroke-width="2.2"/><ellipse cx="48" cy="38" rx="20" ry="15" fill="rgba(255,122,107,.3)" stroke="'+O+'" stroke-width="2"/>'),
-    // sobreposição × falha
-    sobrepor: svg('<rect x="10" y="14" width="42" height="32" fill="rgba(141,242,176,.3)"/><rect x="40" y="14" width="46" height="32" fill="rgba(141,242,176,.3)"/>'
-      +'<rect x="40" y="14" width="12" height="32" fill="rgba(141,242,176,.55)" stroke="'+V+'" stroke-width="1.5"/>'),
-    equilibrio: svg('<rect x="10" y="14" width="39" height="32" fill="rgba(141,242,176,.3)"/><rect x="47" y="14" width="39" height="32" fill="rgba(141,242,176,.3)"/>'
-      +'<path d="M48 10V50" stroke="'+V+'" stroke-width="1.5" stroke-dasharray="3 3"/>'),
-    falha: svg('<rect x="10" y="14" width="33" height="32" fill="rgba(141,242,176,.3)"/><rect x="53" y="14" width="33" height="32" fill="rgba(141,242,176,.3)"/>'
-      +'<rect x="43" y="14" width="10" height="32" fill="rgba(255,122,107,.18)" stroke="'+O+'" stroke-width="1.5" stroke-dasharray="3 3"/>'),
+    limMed: svg('<path d="M10 12H86M10 48H86M10 30H32M64 30H86" stroke="'+L+'" stroke-width="2.2"/><circle cx="48" cy="30" r="11" fill="rgba(255,122,107,.3)" stroke="'+O+'" stroke-width="2"/>'),
+    limGra: svg('<path d="M10 12H86M10 30H26M70 30H86M10 48H26M70 48H86" stroke="'+L+'" stroke-width="2.2"/><ellipse cx="48" cy="38" rx="20" ry="15" fill="rgba(255,122,107,.3)" stroke="'+O+'" stroke-width="2"/>'),
     // volta ao ponto inicial
     retCurto: svg('<rect x="10" y="10" width="76" height="40" rx="3" stroke="'+L+'" stroke-width="2" opacity=".6"/>'
       +'<path d="M78 18V42" stroke="'+L+'" stroke-width="2.2" opacity=".5"/><path d="M78 20H22" stroke="'+M+'" stroke-width="2.4" stroke-dasharray="5 4"/><circle cx="18" cy="20" r="5" fill="#FFD24A"/>'),
@@ -8205,8 +8211,8 @@ function telaPrefs(){
     {v:'guarda', a:'guarda', t:'Cabo de guarda-chuva', d:'Um gancho só, para o lado já aplicado. Sem espaço, abre uma barriguinha antes.'}],
     'Espaçamento de '+fmt(esp,0)+' m e raio de '+fmt(E.P.rMin,0)+' m: diâmetro de giro de '+fmt(giro,0)+' m. O raio da manobra fica em Máquina e sistema.');
   h+=prefGrupo('Manobra por cima do que já foi aplicado','sobreAplicado',p.sobreAplicado?'1':'0',[
-    {v:'1', a:'sobrepor', t:'Pode passar', d:'Com corte de seção no monitor, a barra fecha e não aplica de novo.'},
-    {v:'0', a:'falha', t:'Não pode', d:'Sem corte de seção: o laço aplicaria dose dupla, então o plano evita.'}]);
+    {v:'1', a:'podePassa', t:'Pode passar', d:'Com corte de seção no monitor, a barra fecha e não aplica de novo.'},
+    {v:'0', a:'naoPassa', t:'Não pode', d:'Sem corte de seção: o laço aplicaria dose dupla, então o plano evita.'}]);
   h+=prefGrupo('Obstáculo no meio do talhão','obst',p.obst,[
     {v:'volta', a:'volta', t:'Dar a volta completa', d:'A primeira linha que chega contorna o obstáculo inteiro. Não deixa olho sem aplicar.'},
     {v:'desviar', a:'desviar', t:'Desviar e seguir', d:'A linha desvia e retoma do outro lado. Menos rodado, mas sobra uma faixa em volta.'}]);
@@ -8216,9 +8222,9 @@ function telaPrefs(){
     {v:4, a:'limGra', t:'Tarde · '+m(4), d:'Só os bem grandes. Obstáculo médio é desviado no meio da linha.'}],
     'Abaixo desse tamanho o obstáculo é desviado ou contornado; acima, as linhas param nele como se fosse divisa.');
   h+=prefGrupo('Quando não dá para cobrir tudo sem repetir','conflito',p.conflito,[
-    {v:'sobrepor', a:'sobrepor', t:'Prefiro sobrepor', d:'Fecha qualquer falha, mesmo repassando faixas estreitas.'},
-    {v:'equilibrio', a:'equilibrio', t:'Equilíbrio', d:'Repassa a partir de '+fmt(E.P.repasse||6,0)+' m de falha. É o padrão.'},
-    {v:'falha', a:'falha', t:'Prefiro deixar falha', d:'Só repassa buraco grande. Evita dose dupla onde não há corte de seção.'}]);
+    {v:'sobrepor', a:'sobrepor', t:'Sobrepor', d:'Fecha qualquer falha, mesmo repassando faixas estreitas.'},
+    {v:'equilibrio', a:'equilibrado', t:'Equilibrado', d:'Repassa a partir de '+fmt(E.P.repasse||6,0)+' m de falha. É o padrão.'},
+    {v:'falha', a:'falhar', t:'Falhar', d:'Só repassa buraco grande. Evita dose dupla onde não há corte de seção.'}]);
   if(E.fim!=='ultima') h+=prefGrupo('Volta ao ponto inicial','retorno',p.retorno,[
     {v:'curto', a:'retCurto', t:'Pelo caminho mais curto', d:'Pode andar por cima de linha já aplicada até o lado de apoio.'},
     {v:'bordadura', a:'retBord', t:'Sempre pela bordadura', d:'Mais rodado, porém a volta nunca encosta nas manobras nem cria bifurcação.'}]);
@@ -12139,16 +12145,35 @@ async function montarSelecionados(){
 <script data-modulo="interface-translucida">
 "use strict";
 /* Controles da interface. Sem alterar geometria, propostas ou estados de aprovação. */
-const UX_MAPA={focus:false,layerOpen:false,layers:{linhas:true,manobras:true,bord:true,obst:true},pendingFrame:0,viewBound:false};
-const UX_LAYERS={linhas:['linhas','linhas-brilho'],manobras:['manobras'],bord:['bord'],obst:['obst-f','obst-l']};
+const UX_MAPA={focus:false,layerOpen:false,layers:{linhas:true,manobras:true,bord:true,obst:true,percurso:false},pendingFrame:0,viewBound:false};
+const UX_LAYERS={linhas:['linhas','linhas-brilho'],manobras:['manobras'],bord:['bord'],obst:['obst-f','obst-l'],percurso:['percurso']};
 function uxAplicarCamadas(){
   if(!MAPA.pronto) return;
+  if(typeof percursoFonte==='function') percursoFonte();   // o caminho inteiro acompanha o plano atual
   for(const [key,ids] of Object.entries(UX_LAYERS)) for(const id of ids){
     if(!MAPA.map.getLayer(id)) continue;
     // A revisão sempre revela a geometria necessária para decidir.
     const vis=E.edicao?true:UX_MAPA.layers[key];
     if(MAPA.map.getLayoutProperty(id,'visibility')!==(vis?'visible':'none')) MAPA.map.setLayoutProperty(id,'visibility',vis?'visible':'none');
   }
+}
+/* deixa os quadradinhos coerentes com o que está no mapa */
+function uxSincCamadas(){
+  for(const el of document.querySelectorAll('#uxLayersPanel input[data-ux-layer]')) el.checked=!!UX_MAPA.layers[el.dataset.uxLayer];
+}
+/* O percurso como o monitor vê: uma linha só, na ordem em que a máquina anda. Onde o caminho
+   se parte em dois (a linha segue reto e a manobra sai pelo lado), aparecem dois pedaços — e a
+   máquina, chegando ali, não saberia qual seguir. */
+function percursoFonte(){
+  if(!MAPA.pronto || !MAPA.map.getSource('percurso')) return;
+  if(!UX_MAPA.layers.percurso || !E.plano){ fonte('percurso'); return; }
+  const fs=[]; let atual=null;
+  for(const l of (E.plano.legs||[])){
+    if(!l.p || l.p.length<2) continue;
+    if(atual && dist(atual[atual.length-1], l.p[0])<1.5) atual.push(...l.p.slice(1));
+    else { atual=l.p.slice(); fs.push(atual); }
+  }
+  fonte('percurso', colecao(fs.map((p,i)=>feicao(p,{i}))));
 }
 function uxFecharCamadas(){UX_MAPA.layerOpen=false;$('#uxLayersPanel').hidden=true;$('#uxLayers').setAttribute('aria-expanded','false');}
 function uxFoco(liga){
@@ -12194,7 +12219,14 @@ $('#uxCloseLayers').addEventListener('click',uxFecharCamadas);
 $('#uxFocus').addEventListener('click',()=>uxFoco(!UX_MAPA.focus));
 $('#uxSettings').addEventListener('click',()=>{if(!$('#uxSettings').disabled) abrirAjustes();});
 $('#uxSave').addEventListener('click',()=>{if(!$('#uxSave').disabled){baixar('json');aviso('Projeto baixado. Abra o JSON para continuar depois.');}});
-$('#uxLayersPanel').addEventListener('change',e=>{const key=e.target.dataset.uxLayer;if(key in UX_MAPA.layers){UX_MAPA.layers[key]=e.target.checked;uxAplicarCamadas();}});
+$('#uxLayersPanel').addEventListener('change',e=>{
+  const key=e.target.dataset.uxLayer; if(!(key in UX_MAPA.layers)) return;
+  UX_MAPA.layers[key]=e.target.checked;
+  // o caminho inteiro fala por si: as outras saem da frente (e voltam quando ele sai)
+  if(key==='percurso'){ const p=e.target.checked; UX_MAPA.layers.linhas=!p; UX_MAPA.layers.manobras=!p; UX_MAPA.layers.bord=!p; }
+  else if(e.target.checked) UX_MAPA.layers.percurso=false;
+  uxSincCamadas(); percursoFonte(); uxAplicarCamadas();
+});
 document.addEventListener('pointerdown',e=>{if(UX_MAPA.layerOpen&&!e.target.closest('#uxLayersPanel,#uxLayers'))uxFecharCamadas();});
 addEventListener('keydown',e=>{
   if(e.key==='Escape'){uxFecharCamadas();if(UX_MAPA.focus)uxFoco(false);return;}
@@ -13063,6 +13095,7 @@ dialog.pergunta .acoes .btn{min-height:42px;padding:0 18px;font-size:13.5px}
 .pref-txt span{display:block;margin-top:2px;font-size:11px;line-height:1.45;color:var(--poeira)}
 .pref-txt .pref-av{margin-top:4px;color:#FFE58A;font-size:10.5px}
 .pref-pe{display:flex;gap:16px;flex-wrap:wrap;margin:-6px 0 4px}
+.ux-layer-so{margin-top:6px;padding-top:8px;border-top:1px solid var(--fio)}
 .pref-fora{margin:14px 0;border:1px solid rgba(255,229,138,.35);border-radius:4px;background:rgba(255,229,138,.06);padding:11px 12px}
 .pref-fora .cab{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:7px}
 .pref-fora .cab b{font-size:12.5px;color:#FFE58A;font-weight:600}

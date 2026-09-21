@@ -13,6 +13,8 @@
      R5  "sempre pela bordadura" não pode virar volta pelo caminho curto
      R6  cobertura mínima conforme a preferência de conflito
      R7  "desviar e seguir" não pode aplicar o contorno do obstáculo como caminho
+     R8  o percurso é um caminho só: cada perna começa onde a anterior terminou
+     R9  nenhuma manobra encosta no meio de uma linha (isso é um garfo: a máquina não sabe seguir)
    O que o plano avisa que não atendeu (percViolacoes) sai no relatório, sem quebrar o teste. */
 import { chromium } from 'playwright-core';
 import http from 'node:http';
@@ -82,6 +84,20 @@ for (const arquivo of talhoes) {
           contornoLegs: (pl.legs || []).filter(l => l.tipo === 'contorno').length,
           retornoCurto: !!(pl.otimizados || {}).retorno,
           falha: (pl.cobertura || {}).falha_pct, sobrep: (pl.cobertura || {}).sobrep_pct,
+          cortes: (() => { const L = pl.legs || [], d = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]); let n = 0;
+            for (let i = 1; i < L.length; i++) { const a = L[i-1].p, b = L[i].p; if (a && b && d(a[a.length-1], b[0]) > 1.5) n++; } return n; })(),
+          garfos: (() => { const L = pl.legs || [], d = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]); let n = 0;
+            L.forEach((l, i) => { if (l.t !== 'm' || !l.p) return;
+              for (const q of [l.p[0], l.p[l.p.length-1]]) L.forEach((w, j) => {
+                if (w.t !== 'w' || !w.p || Math.abs(i - j) < 2 || w.tipo === 'bordadura') return;   // o anel da bordadura é percorrido de propósito
+                let melhor = Infinity, s = 0, acc = 0, total = 0;
+                for (let k = 1; k < w.p.length; k++) total += d(w.p[k-1], w.p[k]);
+                for (let k = 1; k < w.p.length; k++) { const A = w.p[k-1], B = w.p[k], Ls = d(A, B) || 1;
+                  const t = Math.max(0, Math.min(1, ((q[0]-A[0])*(B[0]-A[0]) + (q[1]-A[1])*(B[1]-A[1])) / (Ls*Ls)));
+                  const dd = Math.hypot(q[0]-(A[0]+(B[0]-A[0])*t), q[1]-(A[1]+(B[1]-A[1])*t));
+                  if (dd < melhor) { melhor = dd; s = acc + Ls*t; } acc += Ls; }
+                if (melhor <= 1.5 && Math.min(s, total - s) > 3) n++; });
+            }); return n; })(),
           fora: percViolacoes().map(v => v.t + ': ' + v.m)
         };
       });
@@ -95,6 +111,8 @@ for (const arquivo of talhoes) {
       if (r.pref.retorno === 'bordadura' && r.retornoCurto) erra.push('R5 retorno saiu pelo caminho curto');
       const limFalha = r.pref.conflito === 'falha' ? 6 : 2;
       if (r.falha > limFalha) erra.push('R6 falha de ' + r.falha.toFixed(1) + '% (limite ' + limFalha + '%)');
+      if (r.cortes) erra.push('R8 percurso partido em ' + (r.cortes + 1) + ' pedaços');
+      if (r.garfos) erra.push('R9 manobra encostando no meio de uma linha (' + r.garfos + ')');
       if (erros.length) erra.push('erro de JavaScript: ' + erros[0]);
 
       linhas.push({ rot, ok: !erra.length, legs: r.legs, falha: +(+r.falha).toFixed(1), sobrep: +(+r.sobrep).toFixed(1), erra, fora: r.fora });
