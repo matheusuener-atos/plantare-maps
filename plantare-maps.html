@@ -5073,7 +5073,8 @@ function pl4Planejar(c, P, abast, u, op){
     const kk=(xinv?1:0)+(yinv?2:0); let n=m.get(ys); if(!n){ n=new Map(); m.set(ys,n); }
     if(!n.has(kk)) n.set(kk, pl4LigCurta(c,P,D,xs,xinv,ys,yinv,livre)); return n.get(kk); };
   const direto=(xs,xinv,ys,yinv)=>{ const r=curta(xs,xinv,ys,yinv); return r?r.custo:Infinity; };
-  const ordem=pl4Ordem(D, pl4Celulas(segs), {anel:0, s:sQmEst, p:partida}, salto, op.fim, direto);
+  const celulas=pl4Celulas(segs);
+  const ordem=pl4Ordem(D, celulas, {anel:0, s:sQmEst, p:partida}, salto, op.fim, direto);
   // entrada na primeira reta: o lado que chega mais depressa pela bordadura
   const F=ordem[0];
   let acesso=null;
@@ -5226,7 +5227,7 @@ function pl4Planejar(c, P, abast, u, op){
     }
   }
   for(const l of legs) if(l.t==='m' && l.p.length>2){ const r=raioMinimo(l.p).r; l.raio=isFinite(r)?r:null; l.apertada=r<Q.R*0.9; }
-  return {legs, anel:anelM, aneisObs:D.grandes.map(o=>o.anel).filter(Boolean), pendencias:pend.concat(probs), partida, direcao:D.u, rumo:rumoDe(D.u)};
+  return {legs, anel:anelM, aneisObs:D.grandes.map(o=>o.anel).filter(Boolean), pendencias:pend.concat(probs), partida, direcao:D.u, rumo:rumoDe(D.u), celulas:celulas.length};
 }
 
 /* ---------- cobertura: a barra varrendo o percurso inteiro ----------
@@ -5480,6 +5481,9 @@ function pl4Plano(c, d){
     }catch(e){ otim.manobras={tipo:P.tipoManobra, feitas:0, total:0, motivo:'não deu para trocar as manobras'}; }
   }
   { const n=consertarCruzamentos(c, P, legs, pl.partida); if(n) otim.xRefeitos=n; }
+  // quantas regiões o talhão virou nessa direção, e os deslocamentos longos entre elas
+  otim.regioes=(pl.celulas||0);
+  otim.saltos=legs.filter(l=>l.t==='m' && l.tipo!=='retorno' && l.p && l.p.length>1).map(l=>{ let m=0; for(let i=1;i<l.p.length;i++) m+=dist(l.p[i-1],l.p[i]); return Math.round(m); }).filter(m=>m>150);
   cov=pl4Cobertura(c, legs, P.faixa);
   return {legs, rumo:pl.rumo, partida:pl.partida, anel:pl.anel?pl.anel.pts:null,
     pend:pl.pendencias.map(p=>({t:p.t, m:p.m, ir:p.ir||null})), problemas:nucProblemas(c,P,legs), otimizados:otim,
@@ -8680,6 +8684,12 @@ function atualizarPainel(){
       +met(fmt(cb.sobrep_pct,1)+'%','sobreposição','neutro')+met(hhmm(m.tempo_s)+' h','tempo estimado','neutro')
       +met(fmt(m.trabalho_m/1000,1)+' km','aplicando','neutro')+met(fmt(m.deslocamento_m/1000,1)+' km','manobra e deslocamento','neutro')
       +'</div>';
+    // deslocamentos longos: a máquina atravessa de uma região para outra pela bordadura
+    const saltos=(E.plano.otimizados&&E.plano.otimizados.saltos)||[], regioes=(E.plano.otimizados&&E.plano.otimizados.regioes)||0;
+    if(saltos.length) h+='<div class=pref-fora><div class=cab><b>'+saltos.length+(saltos.length===1?' deslocamento longo':' deslocamentos longos')+'</b>'
+      +'<button type=button class=link data-passo=direcao>Trocar a direção</button></div>'
+      +'<div class=pref-fora-item><b>'+(regioes||'?')+' regiões nesta direção</b><span>A máquina atravessa pela bordadura para mudar de região: '
+      +saltos.map(m=>fmt(m,0)+' m').join(', ')+'. Outra direção pode dividir o talhão em menos regiões e evitar esses deslocamentos.</span></div></div>';
     const fora=percViolacoes();
     if(fora.length) h+='<div class="pref-fora"><div class="cab"><b>Fora das suas preferências</b>'
       +'<button type="button" class="link" data-acao="verPrefs">Rever preferências</button></div>'
