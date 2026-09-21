@@ -6565,8 +6565,7 @@ function luzesNoturnas(noite){
   const c01=x=>Math.max(0,Math.min(1,x)), z=m.getZoom(), alto=c01((12-z)/5);   // z≤7 → 1; z≥12 → 0
   let a=z<13 ? noite*(.12+.8*alto*alto*alto) : 0; a=Math.round(a*100)/100;   // no alto, a Terra à noite; embaixo, só um brilho
   if(a===luzesNoturnas.a) return; luzesNoturnas.a=a;
-  if(a>0){ if(m.getLayoutProperty('luzes','visibility')!=='visible') m.setLayoutProperty('luzes','visibility','visible'); m.setPaintProperty('luzes','raster-opacity',a); }
-  else if(m.getLayoutProperty('luzes','visibility')!=='none') m.setLayoutProperty('luzes','visibility','none');
+  m.setPaintProperty('luzes','raster-opacity',a);
 }
 function aplicarCena(agora){
   if((typeof CR!=='undefined' && CR.ativo) || CENA.neutra){ CENA.fx=0; neutralizarCena(); luzesNoturnas(0); return; }
@@ -6578,7 +6577,10 @@ function aplicarCena(agora){
   }
   const s=solDaCena(), tr=tratamento(s), w=TEMPOS[tempoAtual()], fx=CENA.fx;
   luzesNoturnas(Math.max(0,Math.min(1,(-2-s.alt)/10))*fx);   // noite: sol 2° a 12° abaixo do horizonte
-  const la=luzesNoturnas.a||0;   // com as luzes da NASA por cima (a Terra à noite), o escurecimento artificial sai
+  // o escurecimento artificial sai conforme as luzes da NASA aparecem: entra rápido, volta devagar
+  const pronto=MAPA.luzesOk?1:0;
+  MAPA.luzesF = MAPA.luzesF==null ? pronto : MAPA.luzesF + (pronto-MAPA.luzesF)*(pronto>MAPA.luzesF?.12:.02);
+  const la=(luzesNoturnas.a||0)*MAPA.luzesF;
   const brilhoMapa=lerp(1, tr.b*w.b, fx*(1-la)), sat=lerp(1, tr.s*w.s, fx*(1-la));
   const cvMapa=document.querySelector('#mapa .maplibregl-canvas');
   const desf=(w.gotas||0)*fx*(reduzMov?0:1);
@@ -6710,6 +6712,31 @@ function preBaixar(){
 }
 function preRaio(){ const el=MAPA.map.getContainer(), W=el.clientWidth||innerWidth, H=el.clientHeight||innerHeight;
   return [Math.ceil(W/512)+1, Math.ceil(H/512)+1]; }      // meia tela em tiles (cada tile ocupa 256–512 px)
+/* Luzes da NASA (256 px, fonte até o nível 8): o voo e a subida ao espaço passam pelos níveis 8 a 3 em
+   poucos segundos. Sem isso a camada chegava depois da câmera e o mapa piscava claro no meio do caminho. */
+const URL_LUZ='https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_Black_Marble/default/2016-01-01/GoogleMapsCompatible_Level8/';
+const NIVEIS_LUZ=[7,6,5,4], LUZ={feitos:new Set(), fila:[], ativos:0};
+function preLuzes(lon, lat, niveis){
+  if(!navigator.onLine) return;
+  const cx=navigator.connection; if(cx && (cx.saveData || /2g/.test(cx.effectiveType||''))) return;   // dados limitados: deixa o mapa pedir sozinho
+  try{ if(solDaCena().alt>6) return; }catch(e){ /* sem cena: baixa mesmo assim */ }                    // de dia as luzes nem aparecem
+  for(const z of (niveis||NIVEIS_LUZ)){
+    const n=Math.pow(2,z), t=tileDe(lon,lat,z), r=Math.min(2,n);   // 5×5 tiles cobrem a tela nesses níveis
+    for(let dy=-r; dy<=r; dy++) for(let dx=-r; dx<=r; dx++){
+      const x=((t.x+dx)%n+n)%n, y=t.y+dy; if(y<0 || y>=n) continue;
+      const u=URL_LUZ+z+'/'+y+'/'+x+'.png';
+      if(!LUZ.feitos.has(u) && LUZ.fila.length<160){ LUZ.feitos.add(u); LUZ.fila.push(u); }
+    }
+  }
+  luzBaixar();
+}
+/* a NASA responde em HTTP/2 e é outro servidor: 6 pedidos ao mesmo tempo não atrapalham a imagem do satélite */
+function luzBaixar(){
+  while(LUZ.ativos<6 && LUZ.fila.length){
+    const u=LUZ.fila.shift(); LUZ.ativos++;
+    fetch(u,{mode:'cors', priority:'low'}).then(r=>r.arrayBuffer()).catch(()=>{}).finally(()=>{ LUZ.ativos--; luzBaixar(); });
+  }
+}
 /* na decolagem: o pouso e o reenquadramento logo depois dele (pousar → enquadrar a 30° e a 0°, com a margem do painel) */
 function preCarregarVoo(alvo){
   if(!navigator.onLine) return;
@@ -6721,6 +6748,10 @@ function preCarregarVoo(alvo){
   }catch(e){ /* sem enquadramento: fica o pouso */ }
   preTiles(alvo.center[0],alvo.center[1],zp-1,rx,ry);
   preBaixar();
+  // as cidades acesas do trajeto (o voo sobe no meio do caminho), para a noite não piscar
+  const c0=m.getCenter(), meio=[(c0.lng+alvo.center[0])/2, (c0.lat+alvo.center[1])/2];
+  preLuzes(alvo.center[0],alvo.center[1]);
+  if(haversine([c0.lng,c0.lat],alvo.center)>40000) preLuzes(meio[0],meio[1],[6,5,4]);
 }
 /* depois do pouso, com o mapa parado e a conexão livre: a vitrine (talhão colorido, inclinada a 58°) */
 function preCarregarVitrine(){
@@ -6801,9 +6832,10 @@ function iniciarMapa(){
   map.addControl(new maplibregl.ScaleControl({unit:'metric'}), 'bottom-left');
   map.on('load',()=>{
     map.addSource('luzes',{type:'raster', tileSize:256, maxzoom:8,
-      tiles:['https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_Black_Marble/default/2016-01-01/GoogleMapsCompatible_Level8/{z}/{y}/{x}.png'],
+      tiles:[URL_LUZ+'{z}/{y}/{x}.png'],
       attribution:'Luzes noturnas: NASA Black Marble'});
-    map.addLayer({id:'luzes', type:'raster', source:'luzes', layout:{visibility:'none'}, paint:{'raster-opacity':0, 'raster-fade-duration':0}});
+    map.addLayer({id:'luzes', type:'raster', source:'luzes', layout:{visibility:'visible'}, paint:{'raster-opacity':0, 'raster-fade-duration':180}});
+    map.on('sourcedata', e=>{ if(e.sourceId==='luzes') MAPA.luzesOk=map.isSourceLoaded('luzes'); });
     const add=(id)=>map.addSource(id,{type:'geojson', data:VAZIO});
     ['cerca','cercaParcial','obst','anel','previa','lateral','cob','cobParcial','rastro','rastroParcial','bord','linhas','manobras','cabeca','barra','avisos','problema','proposta','probPonto'].forEach(add);
     const L=(o)=>map.addLayer(o);
@@ -8973,6 +9005,7 @@ async function aprovarProjeto(){
   E.aprovado=true; salvar();
   if(MAPA.abast) MAPA.abast.setDraggable(false);
   if(reduzMov){ APROV.carimbo=false; E.passo='arquivos'; entrarNaVitrine({center:E.centro, ...vistaVitrine(), bearing:m0Bearing()}); atualizarPainel(); return; }
+  preLuzes(E.centro[0], E.centro[1], [8,7,6,5,4]);   // a subida ao espaço atravessa esses níveis em 5 s
   APROV.id++; APROV.feitos=0; APROV.carimbo=true;
   E.passo='aprovando'; E.etapa='aprovando';
   atualizarPainel();
@@ -9035,9 +9068,7 @@ function quadroEspaco(agora){
   const noite=lim01((8.5-z)/4);
   const cvMapa=m.getCanvas();
   cvMapa.style.filter = noite>0 ? 'brightness('+(1-.5*noite).toFixed(3)+') saturate('+(1-.25*noite).toFixed(3)+') contrast('+(1+.12*noite).toFixed(3)+')' : '';
-  if(noite>0){ if(m.getLayoutProperty('luzes','visibility')!=='visible') m.setLayoutProperty('luzes','visibility','visible');
-    m.setPaintProperty('luzes','raster-opacity',.92*noite); }
-  else if(m.getLayoutProperty('luzes','visibility')!=='none') m.setLayoutProperty('luzes','visibility','none');
+  m.setPaintProperty('luzes','raster-opacity',.92*noite);   // a camada fica sempre ligada: escondê-la fazia o tile chegar tarde
   // conferências na coluna
   while(APROV.feitos<4 && t>=ESPACO.marcos[APROV.feitos]){ APROV.feitos++; atualizarPainel(); }
 
@@ -9126,7 +9157,7 @@ function terminarEspaco(){
   try{ m.setProjection({type:'mercator'}); }catch(e){ /* nada */ }
   ceuDoEspaco(false);
   m.getCanvas().style.filter='';
-  try{ m.setLayoutProperty('luzes','visibility','none'); }catch(e){ /* sem camada */ }
+  try{ m.setPaintProperty('luzes','raster-opacity',0); }catch(e){ /* sem camada */ }
   CENA.soNuvens=false; CENA.travessia=0; CENA.fx=.8; CENA.fxAnt=1;
   entrarNaVitrine(final);
   ORB.ctx.setTransform(1,0,0,1,0,0); ORB.ctx.clearRect(0,0,ORB.cv.width,ORB.cv.height); ORB.cv.style.display='none';
