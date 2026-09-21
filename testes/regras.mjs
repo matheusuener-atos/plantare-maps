@@ -12,6 +12,7 @@
      R4  "desviar e seguir" não pode gerar volta completa em obstáculo
      R5  "sempre pela bordadura" não pode virar volta pelo caminho curto
      R6  cobertura mínima conforme a preferência de conflito
+     R7  "desviar e seguir" não pode aplicar o contorno do obstáculo como caminho
    O que o plano avisa que não atendeu (percViolacoes) sai no relatório, sem quebrar o teste. */
 import { chromium } from 'playwright-core';
 import http from 'node:http';
@@ -78,6 +79,7 @@ for (const arquivo of talhoes) {
           raioCurto: probs.filter(q => /raio menor que o da máquina/i.test(q.m || '')).length,
           raioMin: isFinite(raioMin) ? +raioMin.toFixed(2) : null, rMin: P.rMin,
           voltasObst: (pl.legs || []).reduce((n, l) => n + (l.voltasCompletas | 0), 0),
+          contornoLegs: (pl.legs || []).filter(l => l.tipo === 'contorno').length,
           retornoCurto: !!(pl.otimizados || {}).retorno,
           falha: (pl.cobertura || {}).falha_pct, sobrep: (pl.cobertura || {}).sobrep_pct,
           fora: percViolacoes().map(v => v.t + ': ' + v.m)
@@ -89,6 +91,7 @@ for (const arquivo of talhoes) {
       if (r.invasoes) erra.push('R2 invasão (' + r.invasoes + ')');
       if (r.raioCurto) erra.push('R3 raio abaixo do da máquina (' + r.raioCurto + ')');
       if (r.pref.obst === 'desviar' && r.voltasObst) erra.push('R4 volta completa com "desviar" (' + r.voltasObst + ')');
+      if (r.pref.obst === 'desviar' && r.contornoLegs) erra.push('R7 contorno do obstáculo virou caminho aplicado (' + r.contornoLegs + ')');
       if (r.pref.retorno === 'bordadura' && r.retornoCurto) erra.push('R5 retorno saiu pelo caminho curto');
       const limFalha = r.pref.conflito === 'falha' ? 6 : 2;
       if (r.falha > limFalha) erra.push('R6 falha de ' + r.falha.toFixed(1) + '% (limite ' + limFalha + '%)');

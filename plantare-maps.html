@@ -5095,8 +5095,9 @@ function pl4Planejar(c, P, abast, u, op){
     if(i===ordem.length-1) return;
     const g=lig[i];
     if(g.direto){ legs.push({t:'m', tipo:'manobra', p:limpar(g.pts), semTransicao:true}); return; }
-    if(g.anel>0 && !usados.has(g.anel)){
+    if(g.anel>0 && !usados.has(g.anel) && D.Q.voltaObst){
       // primeira vez nesse obstáculo: dá a volta aplicando, depois segue a manobra
+      // (com 'desviar e seguir' escolhido, a manobra passa reto: o contorno não vira caminho aplicado)
       usados.add(g.anel);
       const an=D.aneis[g.anel];
       legs.push({t:'m', tipo:'manobra', p:limpar(g.arcA)});
@@ -7158,7 +7159,7 @@ function percViolacoes(){
     else if(!m.feitas) fora.push({t:'Manobras', m:'Nenhuma das '+m.total+' manobras coube como '+nomes[p.manobra]+'; ficaram automáticas.'+(m.motivo?' '+m.motivo:'')});
     else if(m.feitas<m.total) fora.push({t:'Manobras', m:m.feitas+' de '+m.total+' manobras ficaram como '+nomes[p.manobra]+'. As outras não couberam e ficaram automáticas.'});
   }
-  const voltas=(E.plano.legs||[]).reduce((n,l)=>n+(l.voltasCompletas|0),0);
+  const voltas=(E.plano.legs||[]).reduce((n,l)=>n+(l.voltasCompletas|0),0)+(E.plano.legs||[]).filter(l=>l.tipo==='contorno').length;
   if(p.obst==='desviar' && voltas) fora.push({t:'Obstáculos', m:voltas+(voltas===1?' obstáculo teve volta completa':' obstáculos tiveram volta completa')+', mesmo com "desviar e seguir" escolhido.'});
   if(p.obst==='volta' && (E.plano.pend||[]).some(q=>/volta em torno|volta completa/.test(q.m)))
     fora.push({t:'Obstáculos', m:'Algum obstáculo não permitiu a volta completa sem passar da cerca; ali o plano desviou.'});
