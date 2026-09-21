@@ -187,6 +187,40 @@ await t('/pacote: entrega só as camadas pagas, carimbadas', async () => {
   assert.ok(nomes.includes('LICENCA.txt')); for (const k of ['geojson', 'kml', 'kmz', 'rota']) assert.ok(j.negados.includes(k), k); assert.ok(j.negados.filter(k => k.startsWith('shp:')).every(k => !/bordadura|linhas_ab/.test(k)));
   const ab = Buffer.from(j.arquivos.find(a => a.name.endsWith('_ab.kml')).b64, 'base64').toString(); assert.match(ab, /Licenciado a ana@fazenda\.com\.br · pedido /);
   assert.equal(F.compras.find(x => x.id === pedidoArvore).downloads, 1); });
+// ---------- como o percurso é entregue (etapa 03) ----------
+let pedidoTudo;
+const rotaDe=j=>Buffer.from(j.arquivos.find(x=>/_rota[.]kml$/.test(x.name)).b64,'base64').toString();
+await t('percurso: por padrão sai um caminho só', async () => {
+  pedidoTudo=(await chama('/cobranca', { plano: 'SEG1', polys: plano.polys, camadas: TODAS }, ANA)).j.id; F.pagar(pedidoTudo);
+  const { st, j } = await chama('/pacote', { pedido: pedidoTudo, entrada: entradaBoa }, ANA);
+  assert.equal(st, 200, JSON.stringify(j).slice(0,200));
+  const kml=rotaDe(j);
+  assert.equal((kml.match(/<Placemark>/g)||[]).length, 1);
+  assert.match(kml, /<name>Percurso[<][/]name>/);
+  assert.ok(!j.arquivos.some(x=>/_rota_[0-9][0-9][.]kml$/.test(x.name)), 'sem arquivo por pedaço'); });
+await t('percurso: em passos numerados, no mesmo arquivo', async () => {
+  const { st, j } = await chama('/pacote', { pedido: pedidoTudo, entrada: Object.assign({}, entradaBoa, { saida: { modo: 'passos' } }) }, ANA);
+  assert.equal(st, 200); const kml=rotaDe(j);
+  assert.ok((kml.match(/<Placemark>/g)||[]).length >= 1);
+  assert.match(kml, /Passo 01/);
+  assert.ok(!j.arquivos.some(x=>/_rota_[0-9][0-9][.]kml$/.test(x.name)), 'passos ficam num arquivo só'); });
+await t('percurso: um arquivo por pedaço', async () => {
+  const { st, j } = await chama('/pacote', { pedido: pedidoTudo, entrada: Object.assign({}, entradaBoa, { saida: { modo: 'trechos' } }) }, ANA);
+  assert.equal(st, 200);
+  const soltos=j.arquivos.filter(x=>/_rota_[0-9][0-9][.]kml$/.test(x.name));
+  const kml=rotaDe(j), n=(kml.match(/<Placemark>/g)||[]).length;
+  assert.equal(soltos.length, n>1?n:0, 'um arquivo por pedaço quando há mais de um'); });
+await t('percurso: blocos por área respeitam o limite e não cortam no meio da passada', async () => {
+  const { st, j } = await chama('/pacote', { pedido: pedidoTudo, entrada: Object.assign({}, entradaBoa, { saida: { modo: 'blocos', criterio: 'area', valor: 0.5, faixa: 30 } }) }, ANA);
+  assert.equal(st, 200); const kml=rotaDe(j);
+  const nomes=[...kml.matchAll(/<name>(Bloco [0-9][0-9][^<]*)[<][/]name>/g)].map(m=>m[1]);
+  assert.ok(nomes.length >= 2, 'dividiu em blocos: '+nomes.length);
+  assert.match(nomes[0], /Bloco 01 · [0-9,]+ ha/);
+  assert.equal(j.arquivos.filter(x=>/_rota_[0-9][0-9][.]kml$/.test(x.name)).length, nomes.length); });
+await t('percurso: bloco por tanque usa a vazão', async () => {
+  const { j } = await chama('/pacote', { pedido: pedidoTudo, entrada: Object.assign({}, entradaBoa, { saida: { modo: 'blocos', criterio: 'tanque', valor: 200, vazao: 100, faixa: 30 } }) }, ANA);
+  const kml=rotaDe(j), nomes=[...kml.matchAll(/<name>(Bloco[^<]*)[<][/]name>/g)].map(m=>m[1]);
+  assert.ok(nomes.length >= 2); assert.match(nomes[0], / L/); });
 await t('/pacote: cortesia também libera os arquivos', async () => { const { st, j } = await chama('/pacote', { pedido: cort, entrada: entradaBoa }, ANA); assert.equal(st, 200); assert.ok(j.arquivos.some(a => a.name.endsWith('_ab.kmz'))); });
 await t('/pacote: compra de outra conta → 404', async () => { assert.equal((await chama('/pacote', { pedido: pedidoArvore, entrada: entradaBoa }, BETO)).st, 404); });
 await t('/pacote: percurso fora do talhão → 400', async () => {

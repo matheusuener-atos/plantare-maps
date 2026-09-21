@@ -1468,6 +1468,7 @@ dialog.gp{width:min(860px,94vw)}
         <span style="font-family:var(--f-texto);font-size:11.5px;line-height:1.4">Distância máxima do rastro. 0 = metade da barra.</span></label>
       <label class="campo">Voltas de bordadura<select id="aVoltas"><option value="1">1 volta</option><option value="2">2 voltas</option><option value="3">3 voltas</option></select></label>
       <label class="campo">Corte de seção<select id="aCorte"><option value="1">A máquina tem</option><option value="0">Não tem</option></select></label>
+      <label class="campo">Vazão (L/ha)<input type="number" id="aVazao" min="0" step="1" placeholder="opcional"></label>
       <label class="campo">Manobra por cima das linhas<select id="aGotaSobre"><option value="1">Pode (com corte de seção)</option><option value="0">Não pode</option></select></label>
       <label class="campo">Obstáculo pequeno<select id="aVoltaObst"><option value="0">Desviar e seguir</option><option value="1">Dar a volta completa</option></select></label>
       <label class="campo">Manobra entre linhas<select id="aTipoMan"><option value="auto">Automática</option><option value="guarda">Cabo de guarda-chuva</option></select></label>
@@ -6879,7 +6880,9 @@ function iniciarMapa(){
     L({id:'previa',type:'line',source:'previa',paint:{'line-color':COR.linha,'line-width':1.3,'line-opacity':.8,'line-dasharray':[3,2]}});
     L({id:'lateral',type:'line',source:'lateral',layout:{'line-cap':'round'},paint:{'line-color':COR.lateral,'line-width':6,'line-opacity':.9}});
     L({id:'manobras',type:'line',source:'manobras',layout:{'line-join':'round'},paint:{'line-color':COR.manobra,'line-width':1.8,'line-opacity':['case',['==',['get','tipo'],'retorno'],.6,.9]}});
-    L({id:'percurso',type:'line',source:'percurso',layout:{'line-join':'round','line-cap':'round',visibility:'none'},paint:{'line-color':'#C9A2FF','line-width':2.6,'line-opacity':.95}});
+    L({id:'percurso',type:'line',source:'percurso',layout:{'line-join':'round','line-cap':'round',visibility:'none'},
+      paint:{'line-width':2.6,'line-opacity':.95,
+        'line-color':['match',['get','i'],0,'#C9A2FF',1,'#8CF0AE',2,'#FFE58A',3,'#7FD4FF',4,'#FF9AA2','#C9A2FF']}});
     L({id:'linhas-brilho',type:'line',source:'linhas',paint:{'line-color':COR.luz,'line-width':7,'line-blur':6,'line-opacity':0}});
     L({id:'linhas',type:'line',source:'linhas',layout:{'line-join':'round'},paint:{'line-color':['case',['boolean',['get','contorno'],false],'#9FE3B8',['boolean',['get','repasse'],false],'#C9A2FF',COR.linha],'line-width':['case',['boolean',['get','contorno'],false],2.4,['boolean',['get','repasse'],false],2.4,1.7]}});
     L({id:'bord',type:'line',source:'bord',layout:{'line-join':'round'},paint:{'line-color':COR.luz,'line-width':2.6}});
@@ -7127,7 +7130,7 @@ async function hashDoTalhao(polys){
    para sobreviver a troca de fuso.
    ====================================================================== */
 const PREF_CHAVE='pulv.prefs.v4', PROJ_CHAVE='plantare.projeto.v3';
-const PADRAO={faixa:30, esp:30, folga:0, rMin:8, vTrab:18, vMan:8, repasse:6, desvio:0, transversal:0, tVolante:3, voltas:1, corteSecao:true, gotaSobreLinhas:true, voltaObstaculo:true, empurrao:'gradual', tipoManobra:'auto', raioManobra:0};
+const PADRAO={vazao:0, faixa:30, esp:30, folga:0, rMin:8, vTrab:18, vMan:8, repasse:6, desvio:0, transversal:0, tVolante:3, voltas:1, corteSecao:true, gotaSobreLinhas:true, voltaObstaculo:true, empurrao:'gradual', tipoManobra:'auto', raioManobra:0};
 function paramsIniciais(){ let p=null; try{ p=JSON.parse(GUARDA.ler(PREF_CHAVE)||'null'); }catch(e){ p=null; }
   // regra do operador: a primeira linha que chega no obstáculo dá a volta completa nele (sem olho sem aplicar).
   // Preferências salvas antes dessa regra voltam a ligar a volta uma vez.
@@ -7136,7 +7139,8 @@ function paramsIniciais(){ let p=null; try{ p=JSON.parse(GUARDA.ler(PREF_CHAVE)|
 /* Preferências do percurso (etapa 03). Cada talhão guarda as suas; o padrão fica no aparelho.
    O motor já sabia fazer tudo isto — o que faltava era a pessoa escolher, em vez de o código decidir. */
 const PERC_CHAVE='pulv.percurso.v1';
-const PERC_PADRAO={manobra:'auto', sobreAplicado:true, obst:'volta', obstLim:2.2, conflito:'equilibrio', retorno:'curto'};
+const PERC_PADRAO={manobra:'auto', sobreAplicado:true, obst:'volta', obstLim:2.2, conflito:'equilibrio', retorno:'curto', bordNoPercurso:false,
+  saida:'unico', blocoCriterio:'area', blocoValor:0};
 function percLimpa(o){
   o=o||{}; const lim=+o.obstLim;
   return {manobra:['auto','u','gota','guarda'].includes(o.manobra)?o.manobra:'auto',
@@ -7144,7 +7148,11 @@ function percLimpa(o){
     obst:o.obst==='desviar'?'desviar':'volta',
     obstLim:[1.5,2.2,4].includes(lim)?lim:2.2,
     conflito:['sobrepor','equilibrio','falha'].includes(o.conflito)?o.conflito:'equilibrio',
-    retorno:o.retorno==='bordadura'?'bordadura':'curto'};
+    retorno:o.retorno==='bordadura'?'bordadura':'curto',
+    bordNoPercurso:o.bordNoPercurso===true,
+    saida:['unico','passos','trechos','blocos'].includes(o.saida)?o.saida:'unico',
+    blocoCriterio:['tanque','area','passadas','tempo'].includes(o.blocoCriterio)?o.blocoCriterio:'area',
+    blocoValor:Math.max(0, +o.blocoValor||0)};
 }
 function percPadrao(){ let p=null; try{ p=JSON.parse(GUARDA.ler(PERC_CHAVE)||'null'); }catch(e){ p=null; } return percLimpa(p); }
 function percGuardarPadrao(){ try{ GUARDA.gravar(PERC_CHAVE, JSON.stringify(percLimpa(E.pref))); return true; }catch(e){ return false; } }
@@ -8178,6 +8186,28 @@ const PREF_ARTE=(()=>{
     limPeq: svg('<path d="M10 12H86M10 30H86M10 48H86" stroke="'+L+'" stroke-width="2.2"/><circle cx="48" cy="30" r="5" fill="rgba(255,122,107,.3)" stroke="'+O+'" stroke-width="2"/>'),
     limMed: svg('<path d="M10 12H86M10 48H86M10 30H32M64 30H86" stroke="'+L+'" stroke-width="2.2"/><circle cx="48" cy="30" r="11" fill="rgba(255,122,107,.3)" stroke="'+O+'" stroke-width="2"/>'),
     limGra: svg('<path d="M10 12H86M10 30H26M70 30H86M10 48H26M70 48H86" stroke="'+L+'" stroke-width="2.2"/><ellipse cx="48" cy="38" rx="20" ry="15" fill="rgba(255,122,107,.3)" stroke="'+O+'" stroke-width="2"/>'),
+    // como o percurso é entregue nos arquivos
+    saidaUnico: svg('<rect x="26" y="8" width="44" height="44" rx="3" stroke="'+L+'" stroke-width="2" opacity=".85"/>'
+      +'<path d="M34 16h28M34 24h28M34 32h28M34 40h28" stroke="#2dc0fb" stroke-width="2" opacity=".9"/>'),
+    saidaPassos: svg('<rect x="26" y="8" width="44" height="44" rx="3" stroke="'+L+'" stroke-width="2" opacity=".85"/>'
+      +'<path d="M34 16h28" stroke="#2dc0fb" stroke-width="2.4"/><path d="M34 26h28" stroke="#8CF0AE" stroke-width="2.4"/>'
+      +'<path d="M34 36h28" stroke="#FFE58A" stroke-width="2.4"/><path d="M34 45h28" stroke="#C9A2FF" stroke-width="2.4"/>'),
+    saidaTrechos: svg('<rect x="6" y="14" width="26" height="32" rx="3" stroke="'+L+'" stroke-width="2" opacity=".85"/><path d="M12 24h14M12 32h14" stroke="#2dc0fb" stroke-width="2"/>'
+      +'<rect x="35" y="14" width="26" height="32" rx="3" stroke="'+L+'" stroke-width="2" opacity=".85"/><path d="M41 24h14M41 32h14" stroke="#8CF0AE" stroke-width="2"/>'
+      +'<rect x="64" y="14" width="26" height="32" rx="3" stroke="'+L+'" stroke-width="2" opacity=".85"/><path d="M70 24h14M70 32h14" stroke="#FFE58A" stroke-width="2"/>'),
+    saidaBlocos: svg('<rect x="8" y="10" width="80" height="40" rx="3" stroke="'+L+'" stroke-width="2" opacity=".6"/>'
+      +'<rect x="12" y="14" width="22" height="32" fill="rgba(45,192,251,.35)"/><rect x="37" y="14" width="22" height="32" fill="rgba(140,240,174,.35)"/>'
+      +'<rect x="62" y="14" width="22" height="32" fill="rgba(255,229,138,.35)"/>'
+      +'<path d="M35.5 12v36M60.5 12v36" stroke="'+L+'" stroke-width="1.4" stroke-dasharray="3 3" opacity=".8"/>'),
+    // bordadura no mesmo caminho do percurso, ou em arquivo/camada à parte
+    bordFora: svg('<rect x="8" y="10" width="36" height="40" rx="3" stroke="#5BE38A" stroke-width="2.2" opacity=".9"/>'
+      +'<path d="M16 20h20M16 28h20M16 36h20" stroke="#5BE38A" stroke-width="1.6" opacity=".35"/>'
+      +'<rect x="52" y="10" width="36" height="40" rx="3" stroke="'+L+'" stroke-width="2.2" opacity=".9"/>'
+      +'<path d="M58 18h24M58 26h24M58 34h24M58 42h24" stroke="'+L+'" stroke-width="1.6" opacity=".55"/>'
+      +'<path d="M44 30h8" stroke="'+L+'" stroke-width="1.4" stroke-dasharray="2 3" opacity=".6"/>'),
+    bordDentro: svg('<rect x="24" y="10" width="48" height="40" rx="3" stroke="'+L+'" stroke-width="2.2" opacity=".9"/>'
+      +'<path d="M30 18h36M30 26h36M30 34h36" stroke="'+L+'" stroke-width="1.6" opacity=".55"/>'
+      +'<path d="M30 42h36" stroke="#5BE38A" stroke-width="2" opacity=".9"/>'),
     // volta ao ponto inicial
     retCurto: svg('<rect x="10" y="10" width="76" height="40" rx="3" stroke="'+L+'" stroke-width="2" opacity=".6"/>'
       +'<path d="M78 18V42" stroke="'+L+'" stroke-width="2.2" opacity=".5"/><path d="M78 20H22" stroke="'+M+'" stroke-width="2.4" stroke-dasharray="5 4"/><circle cx="18" cy="20" r="5" fill="#FFD24A"/>'),
@@ -8185,6 +8215,36 @@ const PREF_ARTE=(()=>{
       +'<path d="M78 18V42" stroke="'+L+'" stroke-width="2.2" opacity=".5"/><path d="M78 44H16V22" stroke="'+M+'" stroke-width="2.4" stroke-dasharray="5 4"/><circle cx="18" cy="20" r="5" fill="#FFD24A"/>')
   };
 })();
+/* Divide o percurso do mesmo jeito que o Worker faz nos arquivos (ver segmentarPercurso em
+   pix-worker/src/exportar.js). Aqui serve para a tela mostrar a divisão e o mapa pintá-la. */
+function percursoSegmentos(){
+  if(!E.plano) return [];
+  const p=percLimpa(E.pref), P=E.P, faixa=P.faixa||30, vazao=+P.vazao||0;
+  const uteis=(E.plano.legs||[]).filter(l=>l.t!=='x' && l.p && l.p.length>1 && (p.bordNoPercurso || l.tipo!=='bordadura'));
+  if(!uteis.length) return [];
+  const comp=l=>{ let c=0; for(let i=1;i<l.p.length;i++) c+=dist(l.p[i-1],l.p[i]); return c; };
+  const ha=l=>l.t==='w'?comp(l)*faixa/1e4:0;
+  const horas=l=>comp(l)/1000/Math.max(1, l.t==='w'?(P.vTrab||18):(P.vMan||8));
+  const juntar=ls=>{ const pts=[]; for(const l of ls) for(const q of l.p) if(!pts.length || dist(q,pts[pts.length-1])>1e-6) pts.push(q); return pts; };
+  const medir=ls=>{ let a=0,h=0,n=0; for(const l of ls){ a+=ha(l); h+=horas(l); if(l.tipo==='interior') n++; }
+    return {ha:+a.toFixed(2), horas:+h.toFixed(3), passadas:n, litros:vazao>0?Math.round(a*vazao):0}; };
+  const feito=gs=>gs.filter(g=>g.length).map((g,i)=>Object.assign({n:i+1, pts:juntar(g)}, medir(g))).filter(x=>x.pts.length>1);
+  if(p.saida==='unico') return feito([uteis]).map(x=>Object.assign(x,{nome:'Percurso'}));
+  const pedacos=[]; let atual=null, ult=null;
+  for(const l of uteis){ if(!atual || (ult && dist(ult,l.p[0])>1.5)){ atual=[]; pedacos.push(atual); } atual.push(l); ult=l.p[l.p.length-1]; }
+  const comoPasso=gs=>feito(gs).map(x=>Object.assign(x,{nome:'Passo '+String(x.n).padStart(2,'0')}));
+  if(p.saida!=='blocos' || !(p.blocoValor>0)) return comoPasso(pedacos);
+  const quanto=(acc,l)=>p.blocoCriterio==='tempo'?acc+horas(l)
+    :p.blocoCriterio==='passadas'?acc+(l.tipo==='interior'?1:0)
+    :p.blocoCriterio==='tanque'?acc+ha(l)*vazao : acc+ha(l);
+  const blocos=[]; let bloco=[], acc=0, temTrab=false;
+  for(const l of uteis){
+    if(temTrab && l.t==='w' && l.tipo==='interior' && acc>0 && quanto(acc,l)>p.blocoValor){ blocos.push(bloco); bloco=[]; acc=0; temTrab=false; }
+    bloco.push(l); acc=quanto(acc,l); if(l.t==='w') temTrab=true;
+  }
+  if(bloco.length) blocos.push(bloco);
+  return feito(blocos).map(x=>Object.assign(x,{nome:'Bloco '+String(x.n).padStart(2,'0')}));
+}
 /* etapa 03: as decisões que antes o código tomava sozinho */
 function prefGrupo(titulo, campo, valor, ops, nota){
   return '<div class="pref-grupo"><div class="rot">'+esc(titulo)+'</div>'
@@ -8193,6 +8253,38 @@ function prefGrupo(titulo, campo, valor, ops, nota){
       +'<span class="pref-mini">'+(PREF_ARTE[o.a]||'')+'</span>'
       +'<span class="pref-txt"><b>'+esc(o.t)+'</b><span>'+esc(o.d)+'</span>'+(o.av?'<span class="pref-av">'+esc(o.av)+'</span>':'')+'</span></button>').join('')
     +'</div>'+(nota?'<p class="nota">'+esc(nota)+'</p>':'')+'</div>';
+}
+/* a configuração dos blocos: o critério e o tamanho, com a unidade certa */
+const BLOCO_CRIT=[['tanque','Tanque','L por bloco'],['area','Área','ha por bloco'],['passadas','Passadas','passadas por bloco'],['tempo','Tempo','horas por bloco']];
+function blocoConfig(p){
+  const vazao=+E.P.vazao||0;
+  const dica=p.blocoCriterio==='tanque'
+    ? (vazao>0 ? 'Com '+fmt(vazao,0)+' L/ha, um tanque de '+(p.blocoValor||2000)+' L cobre '+fmt((p.blocoValor||2000)/vazao,1)+' ha.'
+               : 'Informe a vazão (L/ha) em Máquina e sistema para o corte por tanque ficar certo.')
+    : p.blocoCriterio==='tempo' ? 'O tempo usa as velocidades de trabalho e de manobra do seu perfil.'
+    : p.blocoCriterio==='passadas' ? 'Conta só as linhas de trabalho; as manobras entre elas vão junto.' : 'Área aplicada por bloco.';
+  const un=(BLOCO_CRIT.find(c=>c[0]===p.blocoCriterio)||BLOCO_CRIT[1])[2];
+  return '<div class="bloco-cfg"><div class="rot">Cortar a cada</div>'
+    +'<div class="seg" role="group" aria-label="Critério do bloco">'
+    +BLOCO_CRIT.map(([k,r])=>'<button type="button" data-bloco-crit="'+k+'" aria-pressed="'+(p.blocoCriterio===k)+'">'+r+'</button>').join('')
+    +'</div><label class="campo bloco-val">'+esc(un)
+    +'<input type="number" id="blocoValor" min="0" step="'+(p.blocoCriterio==='tempo'?'0.25':p.blocoCriterio==='area'?'0.5':'1')+'" value="'+(p.blocoValor||'')+'" placeholder="'+(p.blocoCriterio==='tanque'?'2000':p.blocoCriterio==='area'?'20':p.blocoCriterio==='tempo'?'2':'10')+'"></label>'
+    +'<p class="nota">'+esc(dica)+'</p></div>';
+}
+/* o que a escolha vai produzir, contado no plano de verdade */
+function resumoSaida(p){
+  const nota=t=>'<p class="nota">'+t+'</p>';
+  if(p.saida==='blocos' && !(p.blocoValor>0)) return nota('Informe o tamanho do bloco para ver como fica a divisão.');
+  if(!E.plano) return nota('A divisão aparece aqui depois que o plano for gerado.');
+  const segs=percursoSegmentos();
+  if(!segs.length) return '';
+  if(p.saida==='unico') return nota('Vai sair 1 arquivo com o percurso inteiro ('+fmt(segs[0].ha,1)+' ha).');
+  const n=segs.length, ha=segs.reduce((a,x)=>a+x.ha,0)/n, bloco=p.saida==='blocos';
+  const peca=bloco?(n===1?'bloco':'blocos'):(n===1?'pedaço':'pedaços');
+  const arquivos=p.saida==='passos' ? '1 arquivo com '+n+(n===1?' item numerado':' itens numerados')
+    : n+(n===1?' arquivo':' arquivos')+', um por '+(bloco?'bloco':'pedaço');
+  const litros=segs[0].litros?' · ~'+segs[0].litros+' L cada':'';
+  return nota('Neste plano dá <b>'+n+'</b> '+peca+' de ~'+fmt(ha,1)+' ha'+litros+' — '+arquivos+'.');
 }
 function irParaPrefs(){
   if(!E.pontoSel || E.comparando) return;
@@ -8225,9 +8317,20 @@ function telaPrefs(){
     {v:'sobrepor', a:'sobrepor', t:'Sobrepor', d:'Fecha qualquer falha, mesmo repassando faixas estreitas.'},
     {v:'equilibrio', a:'equilibrado', t:'Equilibrado', d:'Repassa a partir de '+fmt(E.P.repasse||6,0)+' m de falha. É o padrão.'},
     {v:'falha', a:'falhar', t:'Falhar', d:'Só repassa buraco grande. Evita dose dupla onde não há corte de seção.'}]);
+  h+=prefGrupo('Incluir a bordadura no percurso','bordNoPercurso',p.bordNoPercurso?'1':'0',[
+    {v:'0', a:'bordFora', t:'Não: bordadura à parte', d:'O percurso sai só com as linhas e as manobras. A bordadura fica na camada (ou no arquivo) dela.'},
+    {v:'1', a:'bordDentro', t:'Sim: tudo num caminho só', d:'A bordadura entra no começo do percurso, como a máquina vai andar de ponta a ponta.'}],
+    'A maioria dos monitores lê a bordadura primeiro e o percurso depois, cada um no seu arquivo. Esta escolha vale para o mapa e para os arquivos exportados.');
   if(E.fim!=='ultima') h+=prefGrupo('Volta ao ponto inicial','retorno',p.retorno,[
     {v:'curto', a:'retCurto', t:'Pelo caminho mais curto', d:'Pode andar por cima de linha já aplicada até o lado de apoio.'},
     {v:'bordadura', a:'retBord', t:'Sempre pela bordadura', d:'Mais rodado, porém a volta nunca encosta nas manobras nem cria bifurcação.'}]);
+  h+=prefGrupo('Como entregar o percurso nos arquivos','saida',p.saida,[
+    {v:'unico', a:'saidaUnico', t:'Um caminho só', d:'O percurso inteiro numa linha, do começo ao fim. É o padrão.'},
+    {v:'passos', a:'saidaPassos', t:'Passos numerados, no mesmo arquivo', d:'"Passo 01", "Passo 02"… O monitor lista e o operador escolhe um por vez.'},
+    {v:'trechos', a:'saidaTrechos', t:'Um arquivo por pedaço', d:'Para o monitor que carrega um caminho de cada vez.'},
+    {v:'blocos', a:'saidaBlocos', t:'Blocos do tamanho que você quiser', d:'Corta por tanque, área, passadas ou tempo — sempre no fim de uma passada.'}]);
+  if(p.saida==='blocos') h+=blocoConfig(p);
+  h+=resumoSaida(p);
   h+='<div class="pref-pe"><button type="button" class="link" data-pref-acao="padrao">Voltar ao meu padrão</button>'
     +'<button type="button" class="link" data-pref-acao="salvar">Salvar como meu padrão</button></div>';
   return h;
@@ -8460,7 +8563,11 @@ $('#painel').addEventListener('click',e=>{
   }
   if(b.dataset.pref){
     const c=b.dataset.pref, v=b.dataset.val, p=percLimpa(E.pref);
-    p[c] = c==='obstLim' ? +v : c==='sobreAplicado' ? v==='1' : v;
+    p[c] = c==='obstLim' ? +v : (c==='sobreAplicado'||c==='bordNoPercurso') ? v==='1' : v;
+    E.pref=percLimpa(p); salvar(); atualizarPainel(); return;
+  }
+  if(b.dataset.blocoCrit){
+    const p=percLimpa(E.pref); p.blocoCriterio=b.dataset.blocoCrit; p.blocoValor=0;   // muda a unidade: o valor recomeça
     E.pref=percLimpa(p); salvar(); atualizarPainel(); return;
   }
   if(b.dataset.prefAcao){
@@ -10009,6 +10116,14 @@ function pgCupomMsg(txt, cp){
   $('#pgCupomMsg').innerHTML=esc(txt)+(sub?'<br><span class="cupom-sub">'+esc(sub)+'</span>':'');
 }
 $('#pgCupom').addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); $('#pgAplicar').click(); } });
+/* tamanho do bloco: guarda enquanto digita, sem redesenhar o campo embaixo do dedo */
+document.addEventListener('input',e=>{
+  if(e.target.id!=='blocoValor') return;
+  const p=percLimpa(E.pref); p.blocoValor=Math.max(0, parseFloat(e.target.value)||0);
+  E.pref=percLimpa(p); salvar();
+  if(typeof percursoFonte==='function') percursoFonte();   // o mapa acompanha enquanto se digita
+});
+document.addEventListener('change',e=>{ if(e.target.id==='blocoValor') atualizarPainel(); });
 $('#pgCopiar').addEventListener('click',async()=>{
   try{ await navigator.clipboard.writeText($('#pgCopia').value); $('#pgCopiar').textContent='Copiado'; }
   catch(e){ $('#pgCopia').select(); $('#pgCopiar').textContent='Selecionado'; }
@@ -10172,7 +10287,7 @@ function montarRelatorio(){
 /* ---------------- ajustes ---------------- */
 function abrirAjustes(){
   const P=E.P, c=E.crs, s=E.crsSugerido;
-  $('#aFaixa').value=P.faixa; $('#aEsp').value=P.esp; $('#aFolga').value=P.folga; $('#aRaio').value=P.rMin; $('#aVtrab').value=P.vTrab; $('#aVman').value=P.vMan; $('#aRepasse').value=P.repasse; $('#aTransv').value=P.transversal||0; $('#aVolante').value=P.tVolante||3; $('#aVoltas').value=P.voltas||1; $('#aCorte').value=P.corteSecao===false?'0':'1'; $('#aGotaSobre').value=P.gotaSobreLinhas===false?'0':'1'; $('#aVoltaObst').value=P.voltaObstaculo?'1':'0'; $('#aEmpurrao').value=P.empurrao==='direto'?'direto':'gradual'; $('#aTipoMan').value=P.tipoManobra==='guarda'?'guarda':'auto'; $('#aRaioMan').value=P.raioManobra||0; $('#aDesvio').value=P.desvio||0;
+  $('#aVazao').value=P.vazao||''; $('#aFaixa').value=P.faixa; $('#aEsp').value=P.esp; $('#aFolga').value=P.folga; $('#aRaio').value=P.rMin; $('#aVtrab').value=P.vTrab; $('#aVman').value=P.vMan; $('#aRepasse').value=P.repasse; $('#aTransv').value=P.transversal||0; $('#aVolante').value=P.tVolante||3; $('#aVoltas').value=P.voltas||1; $('#aCorte').value=P.corteSecao===false?'0':'1'; $('#aGotaSobre').value=P.gotaSobreLinhas===false?'0':'1'; $('#aVoltaObst').value=P.voltaObstaculo?'1':'0'; $('#aEmpurrao').value=P.empurrao==='direto'?'direto':'gradual'; $('#aTipoMan').value=P.tipoManobra==='guarda'?'guarda':'auto'; $('#aRaioMan').value=P.raioManobra||0; $('#aDesvio').value=P.desvio||0;
   $('#aDatum').value=c.kind; $('#aZona').value=c.zone; $('#aHemis').value=c.south?'S':'N';
   $('#notaSistema').textContent='O KML sempre vem em WGS 84. No Brasil, SIRGAS 2000 difere dele em poucos centímetros; escolha o que o monitor usa. '
     +'Pela posição do talhão, o fuso é '+s.zone+(s.south?' S':' N')+'.';
@@ -10184,7 +10299,8 @@ $('#ajustes').addEventListener('close',()=>{
   if($('#ajustes').returnValue!=='aplicar') return;
   const num=(id,min)=>Math.max(min, parseFloat($(id).value)||min);
   const P={faixa:num('#aFaixa',2), esp:num('#aEsp',1), folga:Math.max(0,parseFloat($('#aFolga').value)||0), rMin:num('#aRaio',1), vTrab:num('#aVtrab',1), vMan:num('#aVman',1), repasse:Math.max(0,parseFloat($('#aRepasse').value)||0), transversal:Math.max(0,parseFloat($('#aTransv').value)||0), tVolante:Math.max(0.5,parseFloat($('#aVolante').value)||3), voltas:Math.max(1,Math.min(3,parseInt($('#aVoltas').value)||1)), corteSecao:$('#aCorte').value!=='0', gotaSobreLinhas:$('#aGotaSobre').value!=='0', voltaObstaculo:$('#aVoltaObst').value==='1', empurrao:$('#aEmpurrao').value==='direto'?'direto':'gradual', desvio:Math.max(0,parseFloat($('#aDesvio').value)||0),
-    tipoManobra:$('#aTipoMan').value==='guarda'?'guarda':'auto', raioManobra:Math.max(0,Math.min(80,parseFloat($('#aRaioMan').value)||0))};
+    tipoManobra:$('#aTipoMan').value==='guarda'?'guarda':'auto', raioManobra:Math.max(0,Math.min(80,parseFloat($('#aRaioMan').value)||0)),
+    vazao:Math.max(0,parseFloat($('#aVazao').value)||0)};
   if(P.raioManobra && P.raioManobra<P.rMin) P.raioManobra=P.rMin;
   const crs={zone:Math.min(60,Math.max(1,parseInt($('#aZona').value,10)||E.crs.zone)), south:$('#aHemis').value==='S', kind:$('#aDatum').value};
   const geo = P.faixa!==E.P.faixa || P.esp!==E.P.esp || P.folga!==E.P.folga || P.rMin!==E.P.rMin || P.repasse!==E.P.repasse || P.voltas!==E.P.voltas || crs.zone!==E.crs.zone || crs.south!==E.crs.south;
@@ -12098,7 +12214,9 @@ const FORMATOS_PAGOS=['kml','kmz','ab','rota','shp','geojson','csv'];
 /* o que o servidor precisa para montar os arquivos pagos: o talhão (confere com a compra) e o percurso */
 function entradaServidor(nome, perfil){
   const fm={}; for(const k of FORMATOS_PAGOS) fm[k]=!!E.sel[k];
-  return {nome, crs:{zone:E.crs.zone, south:!!E.crs.south, kind:E.crs.kind}, polys:E.polysLL,
+  const pp=percLimpa(E.pref);
+  return {nome, crs:{zone:E.crs.zone, south:!!E.crs.south, kind:E.crs.kind}, polys:E.polysLL, bordNoPercurso:pp.bordNoPercurso,
+    saida:{modo:pp.saida, criterio:pp.blocoCriterio, valor:pp.blocoValor, faixa:E.P.faixa, vazao:+E.P.vazao||0, vTrab:E.P.vTrab, vMan:E.P.vMan},
     legs:E.plano.legs.map(l=>({t:l.t, tipo:l.tipo, num:l.num||0, p:l.p})), obstaculos:(E.campo&&E.campo.obst)||[], formatos:fm,
     shp:{camadas:Object.assign({},E.shpCamadas), partes:Object.assign({},E.shpPartes), sistemas:Object.assign({},E.shpSistemas)},
     campos:perfil?perfil.campos||null:null};
@@ -12167,13 +12285,8 @@ function uxSincCamadas(){
 function percursoFonte(){
   if(!MAPA.pronto || !MAPA.map.getSource('percurso')) return;
   if(!UX_MAPA.layers.percurso || !E.plano){ fonte('percurso'); return; }
-  const fs=[]; let atual=null;
-  for(const l of (E.plano.legs||[])){
-    if(!l.p || l.p.length<2) continue;
-    if(atual && dist(atual[atual.length-1], l.p[0])<1.5) atual.push(...l.p.slice(1));
-    else { atual=l.p.slice(); fs.push(atual); }
-  }
-  fonte('percurso', colecao(fs.map((p,i)=>feicao(p,{i}))));
+  const segs=percursoSegmentos();
+  fonte('percurso', colecao(segs.map(g=>feicao(g.pts,{i:(g.n-1)%5, nome:g.nome}))));
 }
 function uxFecharCamadas(){UX_MAPA.layerOpen=false;$('#uxLayersPanel').hidden=true;$('#uxLayers').setAttribute('aria-expanded','false');}
 function uxFoco(liga){
@@ -13096,6 +13209,12 @@ dialog.pergunta .acoes .btn{min-height:42px;padding:0 18px;font-size:13.5px}
 .pref-txt .pref-av{margin-top:4px;color:#FFE58A;font-size:10.5px}
 .pref-pe{display:flex;gap:16px;flex-wrap:wrap;margin:-6px 0 4px}
 .ux-layer-so{margin-top:6px;padding-top:8px;border-top:1px solid var(--fio)}
+.bloco-cfg{margin:-10px 0 16px;padding:11px 12px;border:1px solid var(--fio);border-left:2px solid #c8f3b4;border-radius:0 4px 4px 0;background:rgba(200,243,180,.045)}
+.bloco-cfg .rot{font:9px var(--f-num);letter-spacing:.14em;text-transform:uppercase;color:#aebfa9;margin:0 0 8px}
+.bloco-cfg .seg{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.bloco-cfg .seg button{padding:6px 11px;border:1px solid var(--fio);border-radius:3px;background:transparent;color:var(--poeira);font-size:11.5px;cursor:pointer}
+.bloco-cfg .seg button[aria-pressed="true"]{border-color:#c8f3b4;background:rgba(200,243,180,.12);color:var(--palha)}
+.bloco-cfg .campo{margin:0 0 6px;max-width:260px}
 .pref-fora{margin:14px 0;border:1px solid rgba(255,229,138,.35);border-radius:4px;background:rgba(255,229,138,.06);padding:11px 12px}
 .pref-fora .cab{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:7px}
 .pref-fora .cab b{font-size:12.5px;color:#FFE58A;font-weight:600}

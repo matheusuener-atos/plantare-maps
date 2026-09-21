@@ -301,20 +301,77 @@ function costurarLegs(legs, tol){
   return {legs:out, costuras, vaos};
 }
 /* percurso inteiro como uma linha só, na ordem do trabalho */
-/* linhas e manobras emendadas em trechos contínuos (a bordadura fica de fora) */
-function trechosDeTrabalho(legs){
+/* linhas e manobras emendadas em trechos contínuos; a bordadura entra só se a pessoa pediu
+   (a maioria dos monitores lê a bordadura num arquivo e o percurso em outro) */
+function trechosDeTrabalho(legs, comBord){
   const out=[]; let atual=null;
   for(const l of legs){
-    if(l.t==='x' || l.tipo==='bordadura'){ atual=null; continue; }
+    if(l.t==='x' || (!comBord && l.tipo==='bordadura')){ atual=null; continue; }
     if(!atual){ atual=[]; out.push(atual); }
     for(const q of l.p) if(!atual.length || dist(q,atual[atual.length-1])>1e-6) atual.push(q);
   }
   return out.filter(t=>t.length>1);
 }
-function percursoContinuo(legs){
+/* ===================== como o percurso é entregue =====================
+   Quatro jeitos, escolhidos pela pessoa na etapa 03. O gêmeo desta função mora no app
+   (percursoSegmentos), para a tela mostrar a mesma divisão antes de comprar.
+     unico   → o percurso inteiro numa linha
+     passos  → cada pedaço contínuo vira "Passo 01", "Passo 02"… no mesmo arquivo
+     trechos → o mesmo, porém um arquivo por pedaço
+     blocos  → cortes por tanque, área, passadas ou tempo, sempre no fim de uma passada
+   Regras que valem para todos: o corte nunca cai no meio de uma linha de trabalho, e nenhum
+   bloco sai vazio. É a diferença entre dividir o serviço e induzir a máquina ao erro. */
+function medirLeg(l, o){
+  let comp=0; for(let i=1;i<l.p.length;i++) comp+=dist(l.p[i-1], l.p[i]);
+  const trab=l.t==='w';
+  return {comp, trab, ha:trab?comp*o.faixa/1e4:0, horas:comp/1000/Math.max(1,(trab?o.vTrab:o.vMan))};
+}
+function segmentarPercurso(legs, o){
+  o=Object.assign({modo:'unico', criterio:'area', valor:0, faixa:30, vazao:0, vTrab:18, vMan:8, comBord:false}, o||{});
+  const uteis=legs.filter(l=>l.t!=='x' && l.p && l.p.length>1 && (o.comBord || l.tipo!=='bordadura'));
+  if(!uteis.length) return [];
+  const juntar=ls=>{ const pts=[]; for(const l of ls) for(const q of l.p) if(!pts.length || dist(q,pts[pts.length-1])>1e-6) pts.push(q); return pts; };
+  const medir=ls=>{ let ha=0, horas=0, passadas=0;
+    for(const l of ls){ const m=medirLeg(l,o); ha+=m.ha; horas+=m.horas; if(l.tipo==='interior') passadas++; }
+    return {ha:+ha.toFixed(2), horas:+horas.toFixed(3), passadas, litros:o.vazao>0?Math.round(ha*o.vazao):0}; };
+  const feito=grupos=>grupos.filter(g=>g.length).map((g,i)=>Object.assign({n:i+1, pts:juntar(g)}, medir(g))).filter(x=>x.pts.length>1);
+
+  if(o.modo==='unico') return feito([uteis]).map(x=>Object.assign(x,{nome:'Percurso'}));
+
+  // pedaços contínuos: quebra onde uma perna não encosta na anterior
+  const pedacos=[]; let atual=null, ult=null;
+  for(const l of uteis){
+    if(!atual || (ult && dist(ult, l.p[0])>1.5)){ atual=[]; pedacos.push(atual); }
+    atual.push(l); ult=l.p[l.p.length-1];
+  }
+  if(o.modo==='passos' || o.modo==='trechos')
+    return feito(pedacos).map(x=>Object.assign(x, {nome:'Passo '+String(x.n).padStart(2,'0')}));
+
+  // blocos: acumula até o limite e fecha no fim da passada
+  const lim=+o.valor>0 ? +o.valor : 0;
+  const quanto=(acc,l)=>{ const m=medirLeg(l,o);
+    if(o.criterio==='tempo') return acc+m.horas;
+    if(o.criterio==='passadas') return acc+(l.tipo==='interior'?1:0);
+    if(o.criterio==='tanque') return acc+m.ha*(o.vazao||0);
+    return acc+m.ha; };
+  if(!lim) return feito(pedacos).map(x=>Object.assign(x, {nome:'Passo '+String(x.n).padStart(2,'0')}));
+  const blocos=[]; let bloco=[], acc=0, temTrabalho=false;
+  for(const l of uteis){
+    const depois=quanto(acc,l);
+    // corta antes de começar a próxima passada, nunca no meio dela
+    if(temTrabalho && l.t==='w' && l.tipo==='interior' && acc>0 && depois>lim){
+      blocos.push(bloco); bloco=[]; acc=0; temTrabalho=false;
+      while(bloco.length===0 && blocos.length && blocos[blocos.length-1].length===0) blocos.pop();
+    }
+    bloco.push(l); acc=quanto(acc,l); if(l.t==='w') temTrabalho=true;
+  }
+  if(bloco.length) blocos.push(bloco);
+  return feito(blocos).map(x=>Object.assign(x, {nome:'Bloco '+String(x.n).padStart(2,'0')}));
+}
+function percursoContinuo(legs, comBord){
   const pts=[];
   for(const l of legs){
-    if(l.t==='x') continue;
+    if(l.t==='x' || (!comBord && l.tipo==='bordadura')) continue;
     for(const q of l.p) if(!pts.length || dist(q,pts[pts.length-1])>1e-6) pts.push(q);
   }
   return pts;
@@ -419,11 +476,15 @@ function maisPertoNaLinhaSimples(pts,p){
   }
   return s;
 }
-function kmlPercurso(nome, pts, proj){
-  const ll=pts.map(p=>{const q=proj.inv(p[0],p[1]); return q[0].toFixed(8)+','+q[1].toFixed(8)+',0';}).join(' ');
-  return '<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>'+esc(nome)+' — percurso contínuo</name>'
+const rotuloSeg=g=>g.nome+(g.ha?' · '+g.ha.toFixed(1).replace('.',',')+' ha':'')+(g.litros?' · '+g.litros+' L':'')
+  +(g.horas?' · '+Math.floor(g.horas)+'h'+String(Math.round((g.horas%1)*60)).padStart(2,'0'):'');
+function kmlPercurso(nome, segs, proj){
+  const ll=pts=>pts.map(p=>{const q=proj.inv(p[0],p[1]); return q[0].toFixed(8)+','+q[1].toFixed(8)+',0';}).join(' ');
+  const titulo=segs.length>1 ? ' — percurso em '+segs.length+(/^Bloco/.test(segs[0].nome)?' blocos':' passos') : ' — percurso contínuo';
+  return '<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>'+esc(nome)+titulo+'</name>'
     +'<Style id="pc"><LineStyle><color>ff2dc0fb</color><width>2.2</width></LineStyle></Style>'
-    +'<Placemark><name>Percurso</name><styleUrl>#pc</styleUrl><LineString><tessellate>1</tessellate><coordinates>'+ll+'</coordinates></LineString></Placemark>'
+    +segs.map(g=>'<Placemark><name>'+esc(segs.length>1?rotuloSeg(g):g.nome)+'</name><styleUrl>#pc</styleUrl>'
+      +'<LineString><tessellate>1</tessellate><coordinates>'+ll(g.pts)+'</coordinates></LineString></Placemark>').join('')
     +'</Document></kml>';
 }
 function kmlAB(nome, bordadura, linhasAB, proj, manobras, trechos){
@@ -489,10 +550,16 @@ function montarArquivos(nome, rings, passes, proj, crs, extra){
     files.push({name:nome+'_ab.kml',data:kmlAb}, {name:nome+'_ab.kmz',data:abBytes});
   }
   let rotaKmz=null;
-  if(x.percurso){
-    const p=enc.encode(carimbar(kmlPercurso(nome, x.percurso, proj)));
+  const segs=x.segmentos||[];
+  if(segs.length){
+    const p=enc.encode(carimbar(kmlPercurso(nome, segs, proj)));
     rotaKmz=zipBytes([{name:nome+'_rota.kml',data:p}]);
     files.push({name:nome+'_rota.kml',data:p}, {name:nome+'_rota.kmz',data:rotaKmz});
+    // um arquivo por pedaço, para o monitor que carrega um caminho de cada vez
+    if(x.umArquivoPorSegmento && segs.length>1) for(const g of segs){
+      const su=String(g.n).padStart(2,'0'), un=enc.encode(carimbar(kmlPercurso(nome+' · '+g.nome, [g], proj)));
+      files.push({name:nome+'_rota_'+su+'.kml',data:un}, {name:nome+'_rota_'+su+'.kmz',data:zipBytes([{name:nome+'_rota_'+su+'.kml',data:un}])});
+    }
   }
   // o KMZ do plano completo também entra no pacote
   files.push({name:nome+'.kmz',data:kmzBytes});
@@ -536,7 +603,7 @@ function montarArquivos(nome, rings, passes, proj, crs, extra){
   const regAB=(x.linhasAB||[]).map(l=>({pts:l.pts, camada:'linha_ab', num:l.num, parte:l.parte||0,
     nome:String(l.num).padStart(3,'0')+(l.parte?'-'+l.parte:'')}));
   // linhas e manobras emendadas: cada feição é um pedaço contínuo do caminho
-  const regPercurso=(x.trechosPercurso||[]).map((pts,i)=>({pts, camada:'percurso', num:i+1, parte:0, nome:'P'+String(i+1).padStart(2,'0')}));
+  const regPercurso=(x.segmentos||[]).map(g=>({pts:g.pts, camada:'percurso', num:g.n, parte:0, nome:g.nome.slice(0,10)}));
   const regMan=(x.manobras||[]).map((m,i)=>({pts:m.pts, camada:'manobra', num:0, parte:0, nome:'M'+String(i+1).padStart(3,'0')}));
   const regBord=(x.bordadura||[]).map((pts,i)=>({pts, camada:'bordadura', num:0, parte:0, nome:'BORD'+(i+1)}));
   // percurso: as linhas AB com as manobras, na mesma camada
@@ -643,9 +710,21 @@ export function gerarPacote(e, licenca) {
   const linhasAB = partirNosCruzamentos(legs.filter(l => l.t === 'w' && l.tipo === 'interior').map(l => ({ num: l.num || 0, pts: l.p })));
   const campos = e.campos && typeof e.campos === 'object' ? Object.fromEntries(Object.entries(e.campos).filter(([k, v]) => typeof v === 'string').map(([k, v]) => [k, v.replace(/[^\w]/g, '').slice(0, 10)])) : null;
   const shp = { camadas: shpCam, partes: (e.shp && e.shp.partes) || null, sistemas: (e.shp && e.shp.sistemas) || null };
+  /* como entregar o percurso: um caminho só, passos numerados, um arquivo por pedaço ou blocos */
+  const sd = (e.saida && typeof e.saida === 'object') ? e.saida : {};
+  const saida = {
+    modo: ['unico', 'passos', 'trechos', 'blocos'].includes(sd.modo) ? sd.modo : 'unico',
+    criterio: ['tanque', 'area', 'passadas', 'tempo'].includes(sd.criterio) ? sd.criterio : 'area',
+    valor: Math.max(0, +sd.valor || 0),
+    faixa: Math.max(1, +(e.faixa || (sd.faixa || 30))), vazao: Math.max(0, +sd.vazao || 0),
+    vTrab: Math.max(1, +sd.vTrab || 18), vMan: Math.max(1, +sd.vMan || 8),
+    comBord: e.bordNoPercurso === true
+  };
+  const segmentos = segmentarPercurso(legs, saida);
 
   const todos = montarArquivos(nome, rings, passAttrs(passes), proj, crs,
-    { manobras, obstaculos: obst, bordadura, linhasAB, percurso: percursoContinuo(legs), trechosPercurso: trechosDeTrabalho(legs),
+    { manobras, obstaculos: obst, bordadura, linhasAB, percurso: percursoContinuo(legs, e.bordNoPercurso === true), trechosPercurso: trechosDeTrabalho(legs, e.bordNoPercurso === true),
+      segmentos, umArquivoPorSegmento: saida.modo === 'trechos' || saida.modo === 'blocos',
       shp, campos, licenca: licenca.texto || '' });
   const arquivos = todos.filter(a => quer[formatoDo(a.name)]);
 
