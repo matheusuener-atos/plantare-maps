@@ -1301,7 +1301,12 @@ dialog.gp{width:min(860px,94vw)}
   <label><input type="checkbox" data-ux-layer="manobras" checked><i style="--swatch:#E9B45A"></i>Manobras</label>
   <label><input type="checkbox" data-ux-layer="bord" checked><i style="--swatch:#5BE38A"></i>Bordadura</label>
   <label><input type="checkbox" data-ux-layer="obst" checked><i style="--swatch:#FF7A6B"></i>Obstáculos</label>
-  <label class="ux-layer-so"><input type="checkbox" data-ux-layer="percurso"><i style="--swatch:#C9A2FF"></i>Percurso (e a volta, tracejada)</label>
+  <label class="ux-layer-so"><input type="checkbox" data-ux-layer="percurso"><i style="--swatch:#C9A2FF"></i>Percurso</label>
+  <div class="ux-sub" id="uxPercursoPartes">
+    <label><input type="checkbox" data-ux-parte="bord" checked><i style="--swatch:#5BE38A"></i>Bordadura</label>
+    <label><input type="checkbox" data-ux-parte="caminho" checked><i style="--swatch:#C9A2FF"></i>Caminho</label>
+    <label><input type="checkbox" data-ux-parte="volta" checked><i style="--swatch:#E9B45A"></i>Volta</label>
+  </div>
 </div>
 <div class="ux-project-actions" id="uxProjectActions" hidden>
   <button type="button" id="uxEditArea"><svg viewBox="0 0 24 24"><path d="M4 18 7 6l10 2 2 9-10 2zM7 6l2 13"/></svg><span>Editar área</span></button>
@@ -5091,15 +5096,39 @@ function pl4Planejar(c, P, abast, u, op){
     legs.push({t:'w', tipo:'bordadura', p:an.voltaCompleta(s0,dv), volta:v+1});
     if(v===bord.length-1) sFimM=anelM.norm(s0);
   }
-  // 2) ligações entre retas consecutivas
+  /* 2) ligações entre retas consecutivas.
+     Regra dura: uma ligação nova não pode cruzar nada que já está traçado — nem outra ligação,
+     nem uma reta que não seja a de entrada ou a de saída. É esse cruzamento que vira garfo no
+     monitor: a máquina chega num X e o piloto automático desliga. Quem cruza leva um custo
+     proibitivo e só é usado se não existir mais nada. */
   const lig=[], probs=[];
+  const TODAS=ordem.map(o=>pl4Pts(o.s,o.inv));
+  /* grade de 20 m com tudo o que já está traçado: cada candidato só é comparado com o que passa
+     perto dele. Sem isso a conferência varria todas as retas e o plano demorava minutos. */
+  const XCEL=20, XGRADE=new Map();
+  const xInserir=(pts,ref)=>{ if(!pts || pts.length<2) return;
+    for(let i=1;i<pts.length;i++){ const a=pts[i-1], b=pts[i];
+      const x0=Math.floor(Math.min(a[0],b[0])/XCEL), x1=Math.floor(Math.max(a[0],b[0])/XCEL);
+      const y0=Math.floor(Math.min(a[1],b[1])/XCEL), y1=Math.floor(Math.max(a[1],b[1])/XCEL);
+      for(let x=x0;x<=x1;x++) for(let y=y0;y<=y1;y++){ const ch=x+'|'+y; let l=XGRADE.get(ch); if(!l) XGRADE.set(ch,l=[]); l.push({a,b,ref}); } } };
+  TODAS.forEach((pts,k)=>xInserir(pts,k));
+  const cruzaOFeito=(pts,i)=>{
+    if(!pts || pts.length<2) return false;
+    for(let n=1;n<pts.length;n++){ const a=pts[n-1], b=pts[n];
+      const x0=Math.floor(Math.min(a[0],b[0])/XCEL), x1=Math.floor(Math.max(a[0],b[0])/XCEL);
+      const y0=Math.floor(Math.min(a[1],b[1])/XCEL), y1=Math.floor(Math.max(a[1],b[1])/XCEL);
+      for(let x=x0;x<=x1;x++) for(let y=y0;y<=y1;y++){ const l=XGRADE.get(x+'|'+y); if(!l) continue;
+        for(const sg of l){ if(sg.ref===i || sg.ref===i+1) continue; if(cruzaSeg(a,b,sg.a,sg.b)!=null) return true; } } }
+    return false; };
+  const PENA_X=1e7;
   for(let i=0;i+1<ordem.length;i++){
     const A=ordem[i], B=ordem[i+1], TA=pl4Pts(A.s,A.inv), TB=pl4Pts(B.s,B.inv), mesma=A.cel===B.cel;
     let melhor=null;
     const tentar=(la,lb,lim)=>{ const fa=pl4Saida(D,A.s,A.inv,la), fb=pl4Entrada(D,B.s,B.inv,lb), r=pl4Ligacao(D,fa,fb,lim);
       // curvas que se encontram sem trecho de anel entre elas podem fazer quina: aí vale a ligação curta
       if(r.ok && r.Lr<3 && raioMinimo(r.pts).r<Q.R*0.92) return;
-      if(r.ok){ Object.assign(r,{fa,fb}); r.custo=r.comp+PL4_PERDA*((fa.L-fa.sigma)+(fb.L-fb.sigma)); if(!melhor||r.custo<melhor.custo) melhor=r; } };
+      if(r.ok){ Object.assign(r,{fa,fb}); r.custo=r.comp+PL4_PERDA*((fa.L-fa.sigma)+(fb.L-fb.sigma))+(cruzaOFeito(r.pts,i)?PENA_X:0);
+        if(!melhor||r.custo<melhor.custo) melhor=r; } };
     if(mesma) tentar(pl4LadoPara(TA,TB[0]), pl4LadoPara(pl4Pts(B.s,!B.inv),TA[TA.length-1]), 4*Q.S+80);
     if(!melhor) for(const la of [1,-1]) for(const lb of [1,-1]) tentar(la,lb, mesma?6*Q.S+120:null);
     // pela bordadura só vale se não for dar a volta no talhão: se a única curva que cabe
@@ -5107,13 +5136,16 @@ function pl4Planejar(c, P, abast, u, op){
     const dAB=dist(TA[TA.length-1], TB[0]);
     if(!melhor || melhor.custo>pl4CustoDireto(Q,dAB)){
       const r=curta(A.s,A.inv,B.s,B.inv);
+      if(r && r.pts && cruzaOFeito(r.pts,i)) r.custo=(r.custo||0)+PENA_X;
       if(r && (!melhor || r.custo+120<melhor.custo)) melhor=r;
       else if(!melhor){
         // último recurso antes de sair do rastro: pela bordadura, mesmo que mais longe
         if(mesma) for(const la of [1,-1]) for(const lb of [1,-1]) tentar(la,lb,null);
       }
       // volta enorme pela bordadura (ou nenhuma): uma curva curta por cima da bordadura, sem invadir, é melhor
-      if(!melhor || melhor.custo>4*dAB+800){ const r2=pl4LigCurta(c,P,D,A.s,A.inv,B.s,B.inv,livre,true); if(r2 && (!melhor || r2.custo<melhor.custo)) melhor=r2; }
+      if(!melhor || melhor.custo>4*dAB+800){ const r2=pl4LigCurta(c,P,D,A.s,A.inv,B.s,B.inv,livre,true);
+        if(r2 && r2.pts && cruzaOFeito(r2.pts,i)) r2.custo=(r2.custo||0)+PENA_X;
+        if(r2 && (!melhor || r2.custo<melhor.custo)) melhor=r2; }
       if(!melhor){
         const r=ligarPoses(c,P,poseFim(TA),poseIni(TB),null,livre);
         melhor={ok:true, direto:true, pts:r?r.pts:[TA[TA.length-1], TB[0]], fa:null, fb:null};
@@ -5121,6 +5153,7 @@ function pl4Planejar(c, P, abast, u, op){
       }
     }
     lig.push(melhor);
+    xInserir(melhor && melhor.pts, -1-i);
   }
   // 3) volta ao ponto inicial pela bordadura
   let ret=null;
@@ -6940,7 +6973,8 @@ function iniciarMapa(){
       paint:{'line-color':COR.manobra,'line-width':2.2,'line-opacity':.9,'line-dasharray':[3,2]}});
     L({id:'percurso',type:'line',source:'percurso',layout:{'line-join':'round','line-cap':'round',visibility:'none'},
       paint:{'line-width':2.6,'line-opacity':.95,
-        'line-color':['match',['get','i'],0,'#C9A2FF',1,'#8CF0AE',2,'#FFE58A',3,'#7FD4FF',4,'#FF9AA2','#C9A2FF']}});
+        'line-color':['case',['==',['get','parte'],'bord'],'#5BE38A',
+          ['match',['get','i'],0,'#C9A2FF',1,'#8CF0AE',2,'#FFE58A',3,'#7FD4FF',4,'#FF9AA2','#C9A2FF']]}});
     L({id:'linhas-brilho',type:'line',source:'linhas',paint:{'line-color':COR.luz,'line-width':7,'line-blur':6,'line-opacity':0}});
     L({id:'linhas',type:'line',source:'linhas',layout:{'line-join':'round'},paint:{'line-color':['case',['boolean',['get','contorno'],false],'#9FE3B8',['boolean',['get','repasse'],false],'#C9A2FF',COR.linha],'line-width':['case',['boolean',['get','contorno'],false],2.4,['boolean',['get','repasse'],false],2.4,1.7]}});
     L({id:'bord',type:'line',source:'bord',layout:{'line-join':'round'},paint:{'line-color':COR.luz,'line-width':2.6}});
@@ -12342,7 +12376,7 @@ async function montarSelecionados(){
 <script data-modulo="interface-translucida">
 "use strict";
 /* Controles da interface. Sem alterar geometria, propostas ou estados de aprovação. */
-const UX_MAPA={focus:false,layerOpen:false,layers:{linhas:true,manobras:true,bord:true,obst:true,percurso:false},pendingFrame:0,viewBound:false};
+const UX_MAPA={focus:false,layerOpen:false,layers:{linhas:true,manobras:true,bord:true,obst:true,percurso:false},partes:{bord:true,caminho:true,volta:true},pendingFrame:0,viewBound:false};
 const UX_LAYERS={linhas:['linhas','linhas-brilho'],manobras:['manobras'],bord:['bord'],obst:['obst-f','obst-l'],percurso:['percurso','retorno']};
 function uxAplicarCamadas(){
   if(!MAPA.pronto) return;
@@ -12357,6 +12391,8 @@ function uxAplicarCamadas(){
 /* deixa os quadradinhos coerentes com o que está no mapa */
 function uxSincCamadas(){
   for(const el of document.querySelectorAll('#uxLayersPanel input[data-ux-layer]')) el.checked=!!UX_MAPA.layers[el.dataset.uxLayer];
+  for(const el of document.querySelectorAll('#uxLayersPanel input[data-ux-parte]')) el.checked=!!UX_MAPA.partes[el.dataset.uxParte];
+  const sub=$('#uxPercursoPartes'); if(sub) sub.classList.toggle('desligado', !UX_MAPA.layers.percurso);
 }
 /* O percurso como o monitor vê: uma linha só, na ordem em que a máquina anda. Onde o caminho
    se parte em dois (a linha segue reto e a manobra sai pelo lado), aparecem dois pedaços — e a
@@ -12364,9 +12400,12 @@ function uxSincCamadas(){
 function percursoFonte(){
   if(!MAPA.pronto || !MAPA.map.getSource('percurso')) return;
   if(!UX_MAPA.layers.percurso || !E.plano){ fonte('percurso'); fonte('retorno'); return; }
-  const segs=percursoSegmentos();
-  fonte('percurso', colecao(segs.map(g=>feicao(g.pts,{i:(g.n-1)%5, nome:g.nome}))));
-  const rets=percLimpa(E.pref).retornoSaida==='junto' ? [] : (E.plano.legs||[]).filter(l=>l.tipo==='retorno' && l.p && l.p.length>1);
+  const p=percLimpa(E.pref), partes=UX_MAPA.partes, fs=[];
+  if(partes.caminho) for(const g of percursoSegmentos()) fs.push(feicao(g.pts,{i:(g.n-1)%5, nome:g.nome, parte:'caminho'}));
+  // a bordadura só entra aqui quando ela não faz parte do caminho (senão sairia desenhada duas vezes)
+  if(partes.bord && !p.bordNoPercurso) for(const l of (E.plano.legs||[])) if(l.tipo==='bordadura' && l.p && l.p.length>1) fs.push(feicao(l.p,{i:0, parte:'bord'}));
+  fonte('percurso', colecao(fs));
+  const rets=(partes.volta && p.retornoSaida!=='junto') ? (E.plano.legs||[]).filter(l=>l.tipo==='retorno' && l.p && l.p.length>1) : [];
   fonte('retorno', colecao(rets.map((l,i)=>feicao(l.p,{i}))));
 }
 function uxFecharCamadas(){UX_MAPA.layerOpen=false;$('#uxLayersPanel').hidden=true;$('#uxLayers').setAttribute('aria-expanded','false');}
@@ -12414,6 +12453,12 @@ $('#uxFocus').addEventListener('click',()=>uxFoco(!UX_MAPA.focus));
 $('#uxSettings').addEventListener('click',()=>{if(!$('#uxSettings').disabled) abrirAjustes();});
 $('#uxSave').addEventListener('click',()=>{if(!$('#uxSave').disabled){baixar('json');aviso('Projeto baixado. Abra o JSON para continuar depois.');}});
 $('#uxLayersPanel').addEventListener('change',e=>{
+  const parte=e.target.dataset.uxParte;
+  if(parte){   // bordadura, caminho e volta são partes do percurso
+    UX_MAPA.partes[parte]=e.target.checked;
+    if(!UX_MAPA.layers.percurso){ UX_MAPA.layers.percurso=true; UX_MAPA.layers.linhas=false; UX_MAPA.layers.manobras=false; UX_MAPA.layers.bord=false; }
+    uxSincCamadas(); percursoFonte(); uxAplicarCamadas(); return;
+  }
   const key=e.target.dataset.uxLayer; if(!(key in UX_MAPA.layers)) return;
   UX_MAPA.layers[key]=e.target.checked;
   // o caminho inteiro fala por si: as outras saem da frente (e voltam quando ele sai)
@@ -13290,6 +13335,8 @@ dialog.pergunta .acoes .btn{min-height:42px;padding:0 18px;font-size:13.5px}
 .pref-txt .pref-av{margin-top:4px;color:#FFE58A;font-size:10.5px}
 .pref-pe{display:flex;gap:16px;flex-wrap:wrap;margin:-6px 0 4px}
 .ux-layer-so{margin-top:6px;padding-top:8px;border-top:1px solid var(--fio)}
+.ux-sub{margin:2px 0 0 14px;padding-left:10px;border-left:1px solid var(--fio)}
+.ux-sub.desligado{opacity:.45}
 .bloco-cfg{margin:-10px 0 16px;padding:11px 12px;border:1px solid var(--fio);border-left:2px solid #c8f3b4;border-radius:0 4px 4px 0;background:rgba(200,243,180,.045)}
 .bloco-cfg .rot{font:9px var(--f-num);letter-spacing:.14em;text-transform:uppercase;color:#aebfa9;margin:0 0 8px}
 .bloco-cfg .seg{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}

@@ -100,21 +100,29 @@ for (const arquivo of talhoes) {
                 if (melhor <= 1.5 && Math.min(s, total - s) > 3) n++; });
             }); return n; })(),
           cruzamentos: (() => {
-            // a volta ao ponto inicial anda por cima do aplicado e sai em arquivo próprio: não conta aqui
+            // mesma definição do app: garfo é quando os caminhos se separam de pelo menos um lado.
+            // Andar por cima (juntos antes e depois) não é garfo — a máquina segue reto.
             const L = (pl.legs || []).filter(l => l.t !== 'x' && l.tipo !== 'bordadura' && l.tipo !== 'retorno' && l.p && l.p.length > 1);
-            const pts = []; for (const l of L) for (const q of l.p) if (!pts.length || Math.hypot(q[0]-pts[pts.length-1][0], q[1]-pts[pts.length-1][1]) > 1e-6) pts.push(q);
+            const cru = []; for (const l of L) for (const q of l.p) if (!cru.length || Math.hypot(q[0]-cru[cru.length-1][0], q[1]-cru[cru.length-1][1]) > 1e-6) cru.push(q);
+            const pts = []; const PASSO = 2;                       // reamostra de 2 em 2 m
+            for (let i = 1; i < cru.length; i++) { const a = cru[i-1], b = cru[i], d = Math.hypot(b[0]-a[0], b[1]-a[1]);
+              for (let t = 0; t < d; t += PASSO) pts.push([a[0] + (b[0]-a[0]) * (t/d), a[1] + (b[1]-a[1]) * (t/d)]); }
             const cr = (a,b,c,d) => { const rx=b[0]-a[0], ry=b[1]-a[1], sx=d[0]-c[0], sy=d[1]-c[1], den=rx*sy-ry*sx;
               if (Math.abs(den) < 1e-12) return null; const qx=c[0]-a[0], qy=c[1]-a[1], t=(qx*sy-qy*sx)/den, u=(qx*ry-qy*rx)/den;
               return (t>1e-9 && t<1-1e-9 && u>1e-9 && u<1-1e-9) ? [a[0]+rx*t, a[1]+ry*t] : null; };
-            const CEL=20, g=new Map(), seg=[];
-            for (let i=1;i<pts.length;i++){ const a=pts[i-1], b=pts[i]; seg.push({i,a,b});
+            const em = i => pts[Math.max(0, Math.min(pts.length-1, i))];
+            const dd = (a,b) => Math.hypot(a[0]-b[0], a[1]-b[1]);
+            const CEL = 20, g = new Map(), seg = [];
+            for (let i = 1; i < pts.length; i++) { const a = pts[i-1], b = pts[i]; seg.push({ i, a, b });
               const x0=Math.floor(Math.min(a[0],b[0])/CEL), x1=Math.floor(Math.max(a[0],b[0])/CEL);
               const y0=Math.floor(Math.min(a[1],b[1])/CEL), y1=Math.floor(Math.max(a[1],b[1])/CEL);
               for (let x=x0;x<=x1;x++) for (let y=y0;y<=y1;y++){ const c=x+'|'+y; let l=g.get(c); if(!l) g.set(c,l=[]); l.push(seg.length-1); } }
-            const achados=[];
+            const achados = [];
             for (const ids of g.values()) for (let p1=0;p1<ids.length;p1++) for (let q1=p1+1;q1<ids.length;q1++){
-              const A=seg[ids[p1]], B=seg[ids[q1]]; if (Math.abs(A.i-B.i) < 6) continue;
-              const x = cr(A.a,A.b,B.a,B.b); if (!x) continue;
+              const A = seg[ids[p1]], B = seg[ids[q1]]; if (Math.abs(A.i - B.i) < 6) continue;
+              const x = cr(A.a, A.b, B.a, B.b); if (!x) continue;
+              const lado = o => Math.min(dd(em(A.i+o), em(B.i+o)), dd(em(A.i+o), em(B.i-o)));
+              if (lado(-6) <= 3 && lado(6) <= 3) continue;         // andam juntos: não é garfo
               if (achados.some(z => Math.hypot(z[0]-x[0], z[1]-x[1]) < 8)) continue; achados.push(x); }
             return achados.length; })(),
           fora: percViolacoes().map(v => v.t + ': ' + v.m)
