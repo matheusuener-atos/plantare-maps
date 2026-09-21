@@ -742,7 +742,7 @@ body.trabalho .ux-home-caption{display:none}
 .rodape-painel .btn{min-height:49px;font-size:13px}.rodape-painel .nota{font-size:11px}
 .ux-step-caption{display:flex;align-items:center;justify-content:space-between;font:9px var(--f-num);letter-spacing:.15em;color:#a6bca2;margin-bottom:13px}
 .ux-step-caption strong{font-weight:500;color:#e3f8d6;letter-spacing:.08em}
-.etapas.etapas-guiadas{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px;margin:0 0 25px}
+.etapas.etapas-guiadas{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:6px;margin:0 0 25px}
 .etapas-guiadas button{display:flex;justify-content:center;align-items:center;padding:4px 0 8px;position:relative;border:0;border-bottom:1px solid #e4f6dc29;border-radius:0;min-height:25px;background:transparent;color:#a0b09a;gap:0}
 .etapas-guiadas button span{font:10px var(--f-num);opacity:.7}.etapas-guiadas button .ux-step-name{display:none}
 .etapas-guiadas button.atual{background:transparent;color:#e7ffcf;border-color:#c8f3b4;box-shadow:0 4px 10px -5px #dbffad88}
@@ -5346,7 +5346,7 @@ function pl4Plano(c, d){
   const otim={repasses};
   if(d.fim!=='ultima'){
     const antes=legs.map(l=>Object.assign({},l));
-    try{ const vr=planejarRetorno(c,P,legs,pl.partida,d.apoio); if(vr) otim.retorno=vr; }catch(e){ /* fica a volta pela bordadura */ }
+    try{ if(d.retorno!=='bordadura'){ const vr=planejarRetorno(c,P,legs,pl.partida,d.apoio); if(vr) otim.retorno=vr; } }catch(e){ /* fica a volta pela bordadura */ }
     // a volta "otimizada" não pode invadir cerca nem obstáculo: se invadir, fica a volta pela bordadura
     const ret=legs.filter(l=>l.tipo==='retorno').pop(), ret0=antes.filter(l=>l.tipo==='retorno').pop();
     if(ret && ret0 && ret.p!==ret0.p && pontoInvasor(ret.p,c,P) && !pontoInvasor(ret0.p,c,P)){ legs.length=0; legs.push(...antes); delete otim.retorno; }
@@ -5355,7 +5355,12 @@ function pl4Plano(c, d){
   legs=cost.legs; otim.costuras=cost.costuras; otim.vaos=cost.vaos.length;
   otim.consertos=pl4Consertar(c, d, legs);
   otim.volante=pl4Volante(c, P, legs, pl4Q(P));
-  if(P.tipoManobra==='guarda'){ try{ const g=pecaTrocarTodas(c,P,legs,{tipo:'guarda', raio:P.raioManobra||0}); if(g.ok){ legs=g.legs; otim.guarda={feitas:g.feitas, total:g.total}; } }catch(e){} }
+  if(P.tipoManobra && P.tipoManobra!=='auto'){
+    try{ const g=pecaTrocarTodas(c,P,legs,{tipo:P.tipoManobra, raio:P.raioManobra||0});
+      if(g.ok){ legs=g.legs; otim.guarda={tipo:P.tipoManobra, feitas:g.feitas, total:g.total}; }
+      otim.manobras={tipo:P.tipoManobra, feitas:g.ok?g.feitas:0, total:g.total||0, motivo:g.ok?null:(g.motivo||null)};
+    }catch(e){ otim.manobras={tipo:P.tipoManobra, feitas:0, total:0, motivo:'não deu para trocar as manobras'}; }
+  }
   cov=pl4Cobertura(c, legs, P.faixa);
   return {legs, rumo:pl.rumo, partida:pl.partida, anel:pl.anel?pl.anel.pts:null,
     pend:pl.pendencias.map(p=>({t:p.t, m:p.m, ir:p.ir||null})), problemas:nucProblemas(c,P,legs), otimizados:otim,
@@ -5715,7 +5720,8 @@ function pecaGeoManobra(c,P,A,B,ctx,op){
   let Rs;
   if(op.raio>0) Rs=[Math.max(R0, op.raio)];
   else if(tipo==='guarda') Rs=[...new Set([S/2-0.05, S/2*0.85, S/2*0.7, R0].map(r=>+Math.max(R0,r).toFixed(2)))];   // o "J" de meia barra; se não couber, vai fechando até o raio da máquina
-  else if(tipo==='u'||tipo==='gota') Rs=[R0];
+  else if(tipo==='gota') Rs=[...new Set([R0, R0*1.2, R0*1.5, S/3, S/2.4].map(r=>+Math.max(R0,r).toFixed(2)))].sort((x,y)=>x-y);   // o laço LRL só fecha com raio suficiente; tenta abrir antes de desistir
+  else if(tipo==='u') Rs=[R0];
   else Rs=[...new Set([R0, R0*1.3, R0*1.7, Math.max(R0,(P.esp||P.faixa)/2)].map(r=>+r.toFixed(2)))].sort((x,y)=>x-y);
   let melhor=null, reserva=null;
   // tentativas: encurtar as duas pontas igual (antecipar a curva); no guarda-chuva com a barriguinha,
@@ -5874,7 +5880,9 @@ function pecaTrocarTodas(c,P,legs0,op){
     for(let v=0; v<60 && aceitas.size; v++){
       const t=montar(aceitas);
       if(!t){ aceitas.delete(Math.max(...aceitas)); continue; }
-      const novos=nucProblemas(c,P,t).filter(q=>!velho(q) && q.grav!=='info');
+      // a gota cruza o que já foi aplicado por natureza: com 'pode passar por cima' escolhido, isso deixa de ser erro
+      const cruzaVale=d.op&&d.op.tipo==='gota'&&P.gotaSobreLinhas!==false;
+      const novos=nucProblemas(c,P,t).filter(q=>!velho(q) && q.grav!=='info' && !(cruzaVale && q.tipo==='cruzamento'));
       if(!novos.length){ out=t; break; }
       const q=novos[0]; let pior=null;
       for(const i of aceitas){ let dd=Infinity; for(const j of [i-1,i,i+1]) for(const p of t[j].p) dd=Math.min(dd, dist(p,q.ir)); if(!pior||dd<pior.d) pior={i,d:dd}; }
@@ -5955,14 +5963,20 @@ const TAREFAS={
       }
       if(n){ legs.length=0; legs.push(...legsOk); otim.curvas=n; } }
     // manobra em gota onde a curva não cabia no raio (precisa de corte de seção)
-    if(d.P.corteSecao!==false){ const g=aplicarGota(c, d.P, legs); if(g) otim.gotas=g; }
+    if(d.P.corteSecao!==false && d.P.gotaSobreLinhas!==false){ const g=aplicarGota(c, d.P, legs); if(g) otim.gotas=g; }
     otim.cruzando=contarCruzamentos(legs);
     // manobras seguíveis: a curvatura passa a crescer no ritmo do volante
     { const cl=aplicarClotoide(c, d.P, legs); if(cl.mudadas) otim.clotoide=cl.mudadas; if(cl.duras.length) otim.volanteDuro=cl.duras.length; }
     // pontas encaixadas de verdade, sem vão nem trecho repetido
     { const cost=costurarLegs(legs); if(cost.costuras||cost.vaos.length){ legs.length=0; legs.push(...cost.legs); otim.costuras=cost.costuras; otim.vaos=cost.vaos.length; } }
+    if(d.P.tipoManobra && d.P.tipoManobra!=='auto'){
+      try{ const g=pecaTrocarTodas(c, d.P, legs, {tipo:d.P.tipoManobra, raio:d.P.raioManobra||0});
+        if(g.ok){ legs.length=0; legs.push(...g.legs); }
+        otim.manobras={tipo:d.P.tipoManobra, feitas:g.ok?g.feitas:0, total:g.total||0, motivo:g.ok?null:(g.motivo||null)};
+      }catch(e){ otim.manobras={tipo:d.P.tipoManobra, feitas:0, total:0, motivo:'não deu para trocar as manobras'}; }
+    }
     if(d.fim==='ultima'){ const iR=legs.findIndex(l=>l.tipo==='retorno'); if(iR>=0) legs.splice(iR,1); }
-    else { const vr=planejarRetorno(c, d.P, legs, pl.partida, d.apoio); if(vr) otim.retorno=vr; }
+    else if(d.retorno!=='bordadura'){ const vr=planejarRetorno(c, d.P, legs, pl.partida, d.apoio); if(vr) otim.retorno=vr; }
     const cov=pl4Cobertura(c, legs, d.P.faixa);
     return {legs, rumo:pl.rumo, partida:pl.partida, anel:pl.anel?pl.anel.pts:null,
       pend:pl.pendencias.filter(p=>!viraProblema.test(p.m)).map(p=>({t:p.t, m:p.m, ir:p.ir||null})),
@@ -7109,9 +7123,53 @@ function paramsIniciais(){ let p=null; try{ p=JSON.parse(GUARDA.ler(PREF_CHAVE)|
   // Preferências salvas antes dessa regra voltam a ligar a volta uma vez.
   if(p && !p.regraVolta){ p.voltaObstaculo=true; p.regraVolta=1; }
   return Object.assign({},PADRAO,{regraVolta:1},p||{}); }
+/* Preferências do percurso (etapa 03). Cada talhão guarda as suas; o padrão fica no aparelho.
+   O motor já sabia fazer tudo isto — o que faltava era a pessoa escolher, em vez de o código decidir. */
+const PERC_CHAVE='pulv.percurso.v1';
+const PERC_PADRAO={manobra:'auto', sobreAplicado:true, obst:'volta', obstLim:2.2, conflito:'equilibrio', retorno:'curto'};
+function percLimpa(o){
+  o=o||{}; const lim=+o.obstLim;
+  return {manobra:['auto','u','gota','guarda'].includes(o.manobra)?o.manobra:'auto',
+    sobreAplicado:o.sobreAplicado!==false,
+    obst:o.obst==='desviar'?'desviar':'volta',
+    obstLim:[1.5,2.2,4].includes(lim)?lim:2.2,
+    conflito:['sobrepor','equilibrio','falha'].includes(o.conflito)?o.conflito:'equilibrio',
+    retorno:o.retorno==='bordadura'?'bordadura':'curto'};
+}
+function percPadrao(){ let p=null; try{ p=JSON.parse(GUARDA.ler(PERC_CHAVE)||'null'); }catch(e){ p=null; } return percLimpa(p); }
+function percGuardarPadrao(){ try{ GUARDA.gravar(PERC_CHAVE, JSON.stringify(percLimpa(E.pref))); return true; }catch(e){ return false; } }
+/* tradução para o motor: cada preferência vira um parâmetro que o gerador já entende */
+/* O que o plano NÃO conseguiu atender das suas preferências. É o contrato da etapa 03:
+   em vez de o código escolher em silêncio, ele diz onde teve de ceder. */
+function percViolacoes(){
+  if(!E.plano) return [];
+  const p=percLimpa(E.pref), o=E.plano.otimizados||{}, cb=E.plano.cobertura||{}, fora=[];
+  const nomes={auto:'automática', u:'meia-volta', gota:'gota', guarda:'cabo de guarda-chuva'};
+  if(p.manobra!=='auto'){
+    const m=o.manobras;
+    if(!m || !m.total) fora.push({t:'Manobras', m:'Nenhuma manobra entre linhas vizinhas para trocar por '+nomes[p.manobra]+'.'});
+    else if(!m.feitas) fora.push({t:'Manobras', m:'Nenhuma das '+m.total+' manobras coube como '+nomes[p.manobra]+'; ficaram automáticas.'+(m.motivo?' '+m.motivo:'')});
+    else if(m.feitas<m.total) fora.push({t:'Manobras', m:m.feitas+' de '+m.total+' manobras ficaram como '+nomes[p.manobra]+'. As outras não couberam e ficaram automáticas.'});
+  }
+  const voltas=(E.plano.legs||[]).reduce((n,l)=>n+(l.voltasCompletas|0),0);
+  if(p.obst==='desviar' && voltas) fora.push({t:'Obstáculos', m:voltas+(voltas===1?' obstáculo teve volta completa':' obstáculos tiveram volta completa')+', mesmo com "desviar e seguir" escolhido.'});
+  if(p.obst==='volta' && (E.plano.pend||[]).some(q=>/volta em torno|volta completa/.test(q.m)))
+    fora.push({t:'Obstáculos', m:'Algum obstáculo não permitiu a volta completa sem passar da cerca; ali o plano desviou.'});
+  if(!p.sobreAplicado && o.gotas) fora.push({t:'Sobreposição', m:o.gotas+(o.gotas===1?' manobra em gota passa':' manobras em gota passam')+' por cima do aplicado.'});
+  if(p.conflito==='falha' && cb.sobrep_pct>3) fora.push({t:'Sobreposição', m:'A sobreposição ficou em '+fmt(cb.sobrep_pct,1)+'%, acima do que "prefiro deixar falha" pede.'});
+  if(p.conflito==='sobrepor' && cb.falha_pct>1.5) fora.push({t:'Cobertura', m:'Sobraram '+fmt(cb.falha_pct,1)+'% de falha que o plano não conseguiu repassar.'});
+  if(p.retorno==='bordadura' && o.retorno) fora.push({t:'Volta ao início', m:'A volta saiu pelo caminho curto, e não pela bordadura.'});
+  return fora;
+}
+function percParaMotor(pref, P){
+  pref=percLimpa(pref); const esp=P.esp||P.faixa||30, base=P.repasse==null?6:P.repasse;
+  return {tipoManobra:pref.manobra, voltaObstaculo:pref.obst==='volta',
+    obstGrande:+(pref.obstLim*esp).toFixed(2), gotaSobreLinhas:pref.sobreAplicado,
+    repasse: pref.conflito==='sobrepor' ? Math.min(base,2) : pref.conflito==='falha' ? Math.max(base,25) : base};
+}
 const E={
   etapa:'abertura', arquivo:null, kml:null, polysLL:null, descartados:[], crs:null, crsSugerido:null, proj:null, idArea:null,
-  P:paramsIniciais(), centro:null, bbox:null, local:null,
+  P:paramsIniciais(), pref:percPadrao(), centro:null, bbox:null, local:null,
   campo:null, dir:null, relevo:null, opcoes:[], opcaoSel:null,
   escolha:null,            // {id, rumo, titulo}
   abastLL:null, abastSugerido:true, plano:null, tab:null,
@@ -7119,9 +7177,9 @@ const E={
   anim:{t:0, playing:false, speed:60}, manual:null, trabalhando:false
 };
 const dadosBase=()=>Object.assign({polysLL:E.polysLL, crs:E.crs,
-  P:Object.assign({}, E.P, E.curvas&&E.curvas.length?{curvas:E.curvas}:{},
+  P:Object.assign({}, E.P, percParaMotor(E.pref, E.P), E.curvas&&E.curvas.length?{curvas:E.curvas}:{},
     (E.escolha&&E.escolha.id==='ab'||E.opcaoSel==='ab')&&E.ab?{abOrigem:E.proj.fwd(E.ab.a[0],E.ab.a[1])}:{}), idArea:E.idArea,
-  relevo:(E.relevo&&E.relevo.grade)||null, padrao:E.padrao, fim:E.fim,
+  relevo:(E.relevo&&E.relevo.grade)||null, padrao:E.padrao, fim:E.fim, retorno:percLimpa(E.pref).retorno,
   apoio:E.apoio?[E.proj.fwd(E.apoio.a[0],E.apoio.a[1]), E.proj.fwd(E.apoio.b[0],E.apoio.b[1])]:null},
   E.plano&&E.plano.pedido?{abastPlano:E.plano.pedido.abast, lateralPlano:E.plano.pedido.lateral}:{});
 const u2=r=>[Math.sin(r*RAD), Math.cos(r*RAD)];
@@ -7449,7 +7507,7 @@ async function medirDeclives(){
 }
 function desenharDeclive(){
   if(!MAPA.pronto) return;
-  const ver=E.mapaDeclive && E.declCels && ['direcao','ponto'].includes(E.passo);
+  const ver=E.mapaDeclive && E.declCels && ['direcao','ponto','prefs'].includes(E.passo);
   if(!ver){ fonte('declive'); return; }
   fonte('declive', {type:'FeatureCollection', features:E.declCels.map(c=>({type:'Feature',
     properties:{d:+c.d.toFixed(2)},
@@ -7484,7 +7542,7 @@ async function usarCurvas(origem){
 }
 function desenharGuias(){
   if(!MAPA.pronto) return;
-  fonte('guiaImportada', (E.guias||[]).length && ['direcao','ponto'].includes(E.passo) ? colecao(E.guias.map(g=>feicao(g))) : VAZIO);
+  fonte('guiaImportada', (E.guias||[]).length && ['direcao','ponto','prefs'].includes(E.passo) ? colecao(E.guias.map(g=>feicao(g))) : VAZIO);
 }
 async function importarGuia(file){
   try{
@@ -7574,7 +7632,7 @@ function salvarAB(){
 }
 function desenharAB(){
   if(!MAPA.pronto) return;
-  const ver=E.ab && ['direcao','ponto','plano'].includes(E.passo);
+  const ver=E.ab && ['direcao','ponto','prefs','plano'].includes(E.passo);
   fonte('abLinha', ver ? colecao([{type:'Feature',properties:{},geometry:{type:'LineString',coordinates:[E.ab.a, E.ab.b]}}]) : VAZIO);
 }
 function montarOpcoes(){
@@ -7749,7 +7807,7 @@ function marcarEscolhaSalva(r){
 /* ---------------- plano ---------------- */
 async function gerarPlano(){
   if(!E.escolha || E.escolha.rumo==null){ aviso('Escolha a direção das linhas.'); return; }
-  if(E.passo!=='ponto' || !E.pontoSel || E.comparando){ return irParaPonto(); }
+  if(!['ponto','prefs'].includes(E.passo) || !E.pontoSel || E.comparando){ return irParaPonto(); }
   cancelarEscolhaManual();
   (MAPA.cands||[]).forEach(m=>m.remove()); MAPA.cands=[];
   E.passo='plano';
@@ -8073,11 +8131,98 @@ function bussola(rumo){
       :'<line x1="17" y1="5" x2="17" y2="29" style="transform-origin:17px 17px;transform:rotate('+r.toFixed(1)+'deg)"/>')
     +'</svg>';
 }
+/* Miniaturas da etapa 03: desenho esquemático, sempre igual, para a pessoa reconhecer
+   do que se está falando (cada região chama as manobras de um jeito). */
+const PREF_ARTE=(()=>{
+  const cv='0 0 96 60', L='#EDF0E6', M='#E9B45A', V='#8DF2B0', O='#FF7A6B';
+  const svg=g=>'<svg viewBox="'+cv+'" aria-hidden="true" fill="none" stroke-linecap="round" stroke-linejoin="round">'+g+'</svg>';
+  const linha=(x,y1,y2,cor)=>'<path d="M'+x+' '+y1+'V'+y2+'" stroke="'+(cor||L)+'" stroke-width="2.4"/>';
+  const man=d=>'<path d="'+d+'" stroke="'+M+'" stroke-width="2.4"/>';
+  const duas=(x1,x2)=>linha(x1,56,26)+linha(x2,26,56);
+  return {
+    // manobras entre duas linhas (a linha aplicada em branco, a manobra em amarelo)
+    // automática: a mais curta que couber — a meia-volta cheia, com a gota tracejada atrás
+    auto: svg(duas(28,68)+'<path d="M28 26C28 2 74 8 62 22A13 13 0 1 1 68 26" stroke="'+M+'" stroke-width="2" stroke-dasharray="3 4" opacity=".5"/>'+man('M28 26A20 20 0 0 1 68 26')),
+    u: svg(duas(28,68)+man('M28 26A20 20 0 0 1 68 26')),
+    gota: svg(duas(28,68)+man('M28 26C28 2 74 8 62 22A13 13 0 1 1 68 26')),
+    guarda: svg(duas(28,68)+man('M28 30Q18 30 20 22Q22 16 28 20A20 20 0 0 1 68 26')),
+    // obstáculo no meio do talhão
+    desviar: svg('<circle cx="48" cy="30" r="9" fill="rgba(255,122,107,.25)" stroke="'+O+'" stroke-width="2"/>'
+      +'<path d="M8 16H88M8 44H88" stroke="'+L+'" stroke-width="2.2"/>'
+      +'<path d="M8 30H30A6 6 0 0 0 36 24A6 6 0 0 1 42 18M54 18A6 6 0 0 1 60 24A6 6 0 0 0 66 30H88" stroke="'+M+'" stroke-width="2.4"/>'),
+    volta: svg('<circle cx="48" cy="30" r="9" fill="rgba(255,122,107,.25)" stroke="'+O+'" stroke-width="2"/>'
+      +'<path d="M8 16H88M8 44H88" stroke="'+L+'" stroke-width="2.2"/>'
+      +'<path d="M8 30H33" stroke="'+L+'" stroke-width="2.2"/><path d="M63 30H88" stroke="'+L+'" stroke-width="2.2"/>'
+      +'<circle cx="48" cy="30" r="15" stroke="'+M+'" stroke-width="2.4" stroke-dasharray="3 3"/>'),
+    limPeq: svg('<path d="M10 12H86M10 30H86M10 48H86" stroke="'+L+'" stroke-width="2.2"/><circle cx="48" cy="30" r="5" fill="rgba(255,122,107,.3)" stroke="'+O+'" stroke-width="2"/>'),
+    limMed: svg('<path d="M10 12H86M10 48H86" stroke="'+L+'" stroke-width="2.2"/><path d="M10 30H32M64 30H86" stroke="'+L+'" stroke-width="2.2"/><circle cx="48" cy="30" r="11" fill="rgba(255,122,107,.3)" stroke="'+O+'" stroke-width="2"/>'),
+    limGra: svg('<path d="M10 12H86" stroke="'+L+'" stroke-width="2.2"/><path d="M10 30H26M70 30H86M10 48H26M70 48H86" stroke="'+L+'" stroke-width="2.2"/><ellipse cx="48" cy="38" rx="20" ry="15" fill="rgba(255,122,107,.3)" stroke="'+O+'" stroke-width="2"/>'),
+    // sobreposição × falha
+    sobrepor: svg('<rect x="10" y="14" width="42" height="32" fill="rgba(141,242,176,.3)"/><rect x="40" y="14" width="46" height="32" fill="rgba(141,242,176,.3)"/>'
+      +'<rect x="40" y="14" width="12" height="32" fill="rgba(141,242,176,.55)" stroke="'+V+'" stroke-width="1.5"/>'),
+    equilibrio: svg('<rect x="10" y="14" width="39" height="32" fill="rgba(141,242,176,.3)"/><rect x="47" y="14" width="39" height="32" fill="rgba(141,242,176,.3)"/>'
+      +'<path d="M48 10V50" stroke="'+V+'" stroke-width="1.5" stroke-dasharray="3 3"/>'),
+    falha: svg('<rect x="10" y="14" width="33" height="32" fill="rgba(141,242,176,.3)"/><rect x="53" y="14" width="33" height="32" fill="rgba(141,242,176,.3)"/>'
+      +'<rect x="43" y="14" width="10" height="32" fill="rgba(255,122,107,.18)" stroke="'+O+'" stroke-width="1.5" stroke-dasharray="3 3"/>'),
+    // volta ao ponto inicial
+    retCurto: svg('<rect x="10" y="10" width="76" height="40" rx="3" stroke="'+L+'" stroke-width="2" opacity=".6"/>'
+      +'<path d="M78 18V42" stroke="'+L+'" stroke-width="2.2" opacity=".5"/><path d="M78 20H22" stroke="'+M+'" stroke-width="2.4" stroke-dasharray="5 4"/><circle cx="18" cy="20" r="5" fill="#FFD24A"/>'),
+    retBord: svg('<rect x="10" y="10" width="76" height="40" rx="3" stroke="'+L+'" stroke-width="2" opacity=".6"/>'
+      +'<path d="M78 18V42" stroke="'+L+'" stroke-width="2.2" opacity=".5"/><path d="M78 44H16V22" stroke="'+M+'" stroke-width="2.4" stroke-dasharray="5 4"/><circle cx="18" cy="20" r="5" fill="#FFD24A"/>')
+  };
+})();
+/* etapa 03: as decisões que antes o código tomava sozinho */
+function prefGrupo(titulo, campo, valor, ops, nota){
+  return '<div class="pref-grupo"><div class="rot">'+esc(titulo)+'</div>'
+    +'<div class="pref-lista" role="radiogroup" aria-label="'+esc(titulo)+'">'
+    +ops.map(o=>'<button type="button" class="pref-op'+(String(o.v)===String(valor)?' on':'')+'" role="radio" aria-checked="'+(String(o.v)===String(valor))+'" data-pref="'+campo+'" data-val="'+esc(String(o.v))+'">'
+      +'<span class="pref-mini">'+(PREF_ARTE[o.a]||'')+'</span>'
+      +'<span class="pref-txt"><b>'+esc(o.t)+'</b><span>'+esc(o.d)+'</span>'+(o.av?'<span class="pref-av">'+esc(o.av)+'</span>':'')+'</span></button>').join('')
+    +'</div>'+(nota?'<p class="nota">'+esc(nota)+'</p>':'')+'</div>';
+}
+function irParaPrefs(){
+  if(!E.pontoSel || E.comparando) return;
+  E.passo='prefs'; atualizarPainel(); salvar();
+}
+function telaPrefs(){
+  const p=percLimpa(E.pref), esp=E.P.esp||E.P.faixa||30, m=x=>fmt(x*esp,0)+' m';
+  const giro=2*(E.P.rMin||8), cabeU=esp>=giro;   // o U só cabe com espaçamento maior que o diâmetro de giro
+  const avU=cabeU?'':'Não cabe aqui: o espaçamento ('+fmt(esp,0)+' m) é menor que o diâmetro de giro ('+fmt(giro,0)+' m).';
+  const avGota=cabeU?'Feita para espaçamento menor que o diâmetro de giro ('+fmt(giro,0)+' m). Aqui a meia-volta já cabe, e o plano vai recusar a maioria das gotas.':'';
+  let h='<h2>Preferências do percurso</h2><p class="sub">Cada talhão é um caso. Aqui você diz como o plano deve resolver o que não dá para atender ao mesmo tempo.</p>';
+  h+=prefGrupo('Manobra entre as linhas','manobra',p.manobra,[
+    {v:'auto', a:'auto', t:'Automática', d:'A mais curta que couber no raio da máquina, manobra a manobra.'},
+    {v:'u', a:'u', t:'Meia-volta', d:'O U simples, sem laço. Só cabe quando o espaçamento é maior que o diâmetro de giro.', av:avU},
+    {v:'gota', a:'gota', t:'Gota', d:'Sai para um lado, dá o laço e volta. Cabe em espaçamento apertado, mas passa por cima do aplicado.', av:avGota},
+    {v:'guarda', a:'guarda', t:'Cabo de guarda-chuva', d:'Um gancho só, para o lado já aplicado. Sem espaço, abre uma barriguinha antes.'}],
+    'Espaçamento de '+fmt(esp,0)+' m e raio de '+fmt(E.P.rMin,0)+' m: diâmetro de giro de '+fmt(giro,0)+' m. O raio da manobra fica em Máquina e sistema.');
+  h+=prefGrupo('Manobra por cima do que já foi aplicado','sobreAplicado',p.sobreAplicado?'1':'0',[
+    {v:'1', a:'sobrepor', t:'Pode passar', d:'Com corte de seção no monitor, a barra fecha e não aplica de novo.'},
+    {v:'0', a:'falha', t:'Não pode', d:'Sem corte de seção: o laço aplicaria dose dupla, então o plano evita.'}]);
+  h+=prefGrupo('Obstáculo no meio do talhão','obst',p.obst,[
+    {v:'volta', a:'volta', t:'Dar a volta completa', d:'A primeira linha que chega contorna o obstáculo inteiro. Não deixa olho sem aplicar.'},
+    {v:'desviar', a:'desviar', t:'Desviar e seguir', d:'A linha desvia e retoma do outro lado. Menos rodado, mas sobra uma faixa em volta.'}]);
+  h+=prefGrupo('A partir de que tamanho o obstáculo vira cabeceira','obstLim',p.obstLim,[
+    {v:1.5, a:'limPeq', t:'Cedo · '+m(1.5), d:'Quase todo obstáculo faz as linhas pararem nele.'},
+    {v:2.2, a:'limMed', t:'Padrão · '+m(2.2), d:'O que o plano usava antes desta tela existir.'},
+    {v:4, a:'limGra', t:'Tarde · '+m(4), d:'Só os bem grandes. Obstáculo médio é desviado no meio da linha.'}],
+    'Abaixo desse tamanho o obstáculo é desviado ou contornado; acima, as linhas param nele como se fosse divisa.');
+  h+=prefGrupo('Quando não dá para cobrir tudo sem repetir','conflito',p.conflito,[
+    {v:'sobrepor', a:'sobrepor', t:'Prefiro sobrepor', d:'Fecha qualquer falha, mesmo repassando faixas estreitas.'},
+    {v:'equilibrio', a:'equilibrio', t:'Equilíbrio', d:'Repassa a partir de '+fmt(E.P.repasse||6,0)+' m de falha. É o padrão.'},
+    {v:'falha', a:'falha', t:'Prefiro deixar falha', d:'Só repassa buraco grande. Evita dose dupla onde não há corte de seção.'}]);
+  if(E.fim!=='ultima') h+=prefGrupo('Volta ao ponto inicial','retorno',p.retorno,[
+    {v:'curto', a:'retCurto', t:'Pelo caminho mais curto', d:'Pode andar por cima de linha já aplicada até o lado de apoio.'},
+    {v:'bordadura', a:'retBord', t:'Sempre pela bordadura', d:'Mais rodado, porém a volta nunca encosta nas manobras nem cria bifurcação.'}]);
+  h+='<div class="pref-pe"><button type="button" class="link" data-pref-acao="padrao">Voltar ao meu padrão</button>'
+    +'<button type="button" class="link" data-pref-acao="salvar">Salvar como meu padrão</button></div>';
+  return h;
+}
 function etapasHtml(){
-  const nomes=[['direcao','Direção'],['ponto','Início'],['plano','Plano'],['revisao','Revisão'],['previa','Prévia'],['aprovacao','Aprovação'],['arquivos','Arquivos']];
+  const nomes=[['direcao','Direção'],['ponto','Início'],['prefs','Preferências'],['plano','Plano'],['revisao','Revisão'],['previa','Prévia'],['aprovacao','Aprovação'],['arquivos','Arquivos']];
   const tela=E.passo==='aprovando'?'aprovacao':E.passo==='plano'?(E.edicao?'revisao':E.guia||'plano'):E.passo;
   const atual=Math.max(0,nomes.findIndex(x=>x[0]===tela));
-  return '<div class="ux-step-caption"><span>SEU PERCURSO</span><strong>'+String(atual+1).padStart(2,'0')+' / 07 · '+nomes[atual][1].toUpperCase()+'</strong></div><nav class="etapas etapas-guiadas" aria-label="Etapas do plano">'+nomes.map(([k,t],i)=>
+  return '<div class="ux-step-caption"><span>SEU PERCURSO</span><strong>'+String(atual+1).padStart(2,'0')+' / '+String(nomes.length).padStart(2,'0')+' · '+nomes[atual][1].toUpperCase()+'</strong></div><nav class="etapas etapas-guiadas" aria-label="Etapas do plano">'+nomes.map(([k,t],i)=>
     '<button type="button" data-passo="'+k+'" title="'+(i+1)+'. '+t+'" aria-label="Etapa '+(i+1)+': '+t+'" class="'+(i===atual?'atual':i<atual?'feito':'')+'"'+(i<atual && !fluxoOcupado()?'':' disabled')+(i===atual?' aria-current="step"':'')+'><span>'+String(i+1).padStart(2,'0')+'</span><span class="ux-step-name">'+t+'</span></button>').join('')+'</nav>';
 }
 function cabCompacto(){
@@ -8181,8 +8326,13 @@ function atualizarPainel(){
     if(!E.comparando && melhor) h+='<p class="nota" style="margin-top:10px">Sugerido: menor tempo estimado, considerando as manobras.</p>';
     const feitos=E.pontos.filter(p=>p.res).length;
     const pode=!E.comparando && E.pontoSel && et!=='calculando';
-    rodape='<button class="btn btn-luz btn-bloco" data-acao="gerar"'+(pode?'':' disabled')+'>'
-      +(et==='calculando'?'Calculando…':E.comparando?'Comparando '+feitos+' de '+(E.pontos.length||'…')+' pontos':'Gerar plano')+'</button>';
+    rodape='<button class="btn btn-luz btn-bloco" data-acao="prefs"'+(pode?'':' disabled')+'>'
+      +(et==='calculando'?'Calculando…':E.comparando?'Comparando '+feitos+' de '+(E.pontos.length||'…')+' pontos':'Preferências do percurso')+'</button>';
+  }
+
+  else if(E.passo==='prefs'){
+    h+=etapasHtml()+cabCompacto()+resumoDirecao()+telaPrefs();
+    rodape='<button class="btn btn-luz btn-bloco" data-acao="gerar">Gerar plano</button>';
   }
 
   else if(E.passo==='aprovando' && E.plano){
@@ -8230,6 +8380,10 @@ function atualizarPainel(){
       +met(fmt(cb.sobrep_pct,1)+'%','sobreposição','neutro')+met(hhmm(m.tempo_s)+' h','tempo estimado','neutro')
       +met(fmt(m.trabalho_m/1000,1)+' km','aplicando','neutro')+met(fmt(m.deslocamento_m/1000,1)+' km','manobra e deslocamento','neutro')
       +'</div>';
+    const fora=percViolacoes();
+    if(fora.length) h+='<div class="pref-fora"><div class="cab"><b>Fora das suas preferências</b>'
+      +'<button type="button" class="link" data-acao="verPrefs">Rever preferências</button></div>'
+      +fora.map(v=>'<div class="pref-fora-item"><b>'+esc(v.t)+'</b><span>'+esc(v.m)+'</span></div>').join('')+'</div>';
     const probs=E.plano.problemas||[], pend=E.plano.pend||[];
     if(probs.length){
       const nErr=probs.filter(q=>q.grav==='erro').length;
@@ -8290,6 +8444,16 @@ $('#painel').addEventListener('click',e=>{
     else { E.escolhendoApoio=true; MAPA.map.getCanvas().style.cursor='crosshair'; etiqueta('Toque num lado da cerca'); }
     atualizarPainel(); return;
   }
+  if(b.dataset.pref){
+    const c=b.dataset.pref, v=b.dataset.val, p=percLimpa(E.pref);
+    p[c] = c==='obstLim' ? +v : c==='sobreAplicado' ? v==='1' : v;
+    E.pref=percLimpa(p); salvar(); atualizarPainel(); return;
+  }
+  if(b.dataset.prefAcao){
+    if(b.dataset.prefAcao==='padrao'){ E.pref=percPadrao(); salvar(); atualizarPainel(); aviso('Voltou para o seu padrão.'); }
+    else { E.pref=percLimpa(E.pref); aviso(percGuardarPadrao()?'Guardado: os próximos talhões começam assim.':'Não foi possível guardar neste navegador.'); }
+    return;
+  }
   if(b.dataset.fim){ if(E.fim!==b.dataset.fim){ E.fim=b.dataset.fim; E.pontosChave=null; E.correcoes=E.correcoes.filter(c=>c.lote); if(E.passo==='ponto') irParaPonto(); else atualizarPainel(); } return; }
   if(b.dataset.ponto){ selecionarPonto(b.dataset.ponto); const pt=E.pontos.find(p=>p.id===b.dataset.ponto);
     if(pt) MAPA.map.easeTo({center:E.proj.inv(pt.q[0],pt.q[1]), duration:reduzMov?0:600}); return; }
@@ -8300,6 +8464,8 @@ $('#painel').addEventListener('click',e=>{
   if(b.dataset.dl){ baixar(b.dataset.dl); return; }
   const a=b.dataset.acao;
   if(a==='continuar') irParaPonto();
+  if(a==='prefs') irParaPrefs();
+  if(a==='verPrefs'){ E.passo='prefs'; atualizarPainel(); return; }
   if(a==='gerar') gerarPlano();
   if(a==='detalhes'){ E.detalhes=!E.detalhes; atualizarPainel(); }
   if(a==='retaAB'){ abrirAB(); return; }
@@ -10060,7 +10226,7 @@ function estadoSalvo(){
   return {app:'plantare-maps', ver:5, quando:new Date().toISOString(), arquivo:E.arquivo, kml:E.kml,
     crs:{zone:E.crs.zone, south:E.crs.south, kind:E.crs.kind}, params:E.P,
     escolha:E.escolha?{id:E.escolha.id, rumo:E.escolha.rumo, titulo:E.escolha.titulo}:null, crDesenho:E.crDesenho||null,
-    abastecimento:E.abastLL, abastSugerido:E.abastSugerido, padrao:E.padrao, correcoes:E.correcoes, fim:E.fim, obstManuais:E.obstManuais||[], apoio:E.apoio||null, ab:E.ab||null, pastaNome:E.pastaNome||''};
+    abastecimento:E.abastLL, abastSugerido:E.abastSugerido, padrao:E.padrao, pref:percLimpa(E.pref), correcoes:E.correcoes, fim:E.fim, obstManuais:E.obstManuais||[], apoio:E.apoio||null, ab:E.ab||null, pastaNome:E.pastaNome||''};
 }
 function salvar(){ if(!E.kml) return; const e=estadoSalvo(); if(!GUARDA.gravar(PROJ_CHAVE, JSON.stringify(e))) aviso('Não foi possível salvar neste navegador. Baixe o projeto para guardar seus ajustes.');
   if(typeof contaTalhaoAgendar==='function') contaTalhaoAgendar(); }   // com conta: guarda também em "Meus talhões"
@@ -10102,6 +10268,7 @@ async function restaurar(o){
   E.correcoes=Array.isArray(o.correcoes)?o.correcoes:[];
   if(o.padrao){ E.padrao=o.padrao; E.padraoManual=true; }
   E.fim=o.fim==='ultima'?'ultima':'inicio';
+  E.pref=o.pref?percLimpa(o.pref):percPadrao();
   E.obstManuais=Array.isArray(o.obstManuais)?o.obstManuais:[]; if(E.obstManuais.length) combinarObstaculos();
   E.apoio=o.apoio||null; E.ab=o.ab||null; E.pastaNome=o.pastaNome||'';
   comecarVoo();
@@ -12873,6 +13040,30 @@ dialog.pergunta .acoes .btn{min-height:42px;padding:0 18px;font-size:13.5px}
   <h2 id="perguntaTitulo"></h2><p id="perguntaTexto"></p>
   <div class="acoes"><button type="button" class="btn btn-fio" id="perguntaNao">Cancelar</button><button type="button" class="btn btn-luz" id="perguntaSim">OK</button></div>
 </dialog>
+<style id="prefs-percurso">
+.pref-grupo{margin:0 0 20px}
+.pref-grupo .rot{font:9px var(--f-num);letter-spacing:.14em;text-transform:uppercase;color:#aebfa9;margin:0 0 8px}
+.pref-lista{display:flex;flex-direction:column;gap:6px}
+.pref-op{display:flex;align-items:center;gap:12px;width:100%;text-align:left;padding:10px 11px;border:1px solid var(--fio);border-radius:4px;background:transparent;color:var(--palha);cursor:pointer;transition:border-color .2s,background .2s}
+.pref-op:hover{border-color:#c8f3b455;background:rgba(200,243,180,.05)}
+.pref-op.on{border-color:#c8f3b4;background:rgba(200,243,180,.1)}
+.pref-op .pref-mini{flex:none;width:66px;height:42px;display:block;border:1px solid var(--fio);border-radius:3px;background:rgba(4,12,8,.4);overflow:hidden}
+.pref-op.on .pref-mini{border-color:#c8f3b455}
+.pref-op .pref-mini svg{display:block;width:100%;height:100%}
+.pref-txt{min-width:0}
+.pref-txt b{display:block;font-size:13px;font-weight:500;line-height:1.3}
+.pref-txt span{display:block;margin-top:2px;font-size:11px;line-height:1.45;color:var(--poeira)}
+.pref-txt .pref-av{margin-top:4px;color:#FFE58A;font-size:10.5px}
+.pref-pe{display:flex;gap:16px;flex-wrap:wrap;margin:-6px 0 4px}
+.pref-fora{margin:14px 0;border:1px solid rgba(255,229,138,.35);border-radius:4px;background:rgba(255,229,138,.06);padding:11px 12px}
+.pref-fora .cab{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:7px}
+.pref-fora .cab b{font-size:12.5px;color:#FFE58A;font-weight:600}
+.pref-fora-item{display:block;padding:5px 0;border-top:1px solid rgba(255,229,138,.16)}
+.pref-fora-item:first-of-type{border-top:0}
+.pref-fora-item b{display:block;font:9px var(--f-num);letter-spacing:.12em;text-transform:uppercase;color:#d9c98f;font-weight:400}
+.pref-fora-item span{display:block;margin-top:2px;font-size:11.5px;line-height:1.45;color:var(--poeira)}
+@media(max-width:760px){.pref-op{padding:9px 9px;gap:10px}.pref-op .pref-mini{width:58px;height:38px}.pref-txt span{font-size:10.5px}}
+</style>
 <style id="painel-recolher">
 @media(max-width:760px){
   .painel .alca{cursor:pointer;min-height:26px;padding:9px 0 6px!important;display:flex!important;flex-direction:column;align-items:center;gap:6px;background:transparent;border:0;color:#cfe3c6;-webkit-tap-highlight-color:transparent}
