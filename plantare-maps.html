@@ -1073,7 +1073,7 @@ dialog.cp{width:min(980px,94vw);max-height:92vh;padding:0;color:var(--palha);ove
 .cp-zleg{display:flex;flex-wrap:wrap;gap:6px 14px}
 .cp-leg{display:inline-flex;align-items:center;gap:6px;font:10px var(--f-num);color:var(--poeira)}
 .cp-leg i{flex:none;width:14px;height:2px;border-radius:1px}.cp-leg i.obst{height:9px;width:9px;background:rgba(255,122,107,.35);border:1px solid rgba(255,122,107,.8)}
-.cp-leg i.ponto{width:8px;height:8px;min-height:8px;max-height:8px;flex:none;align-self:center;border-radius:50%;background:#FFD24A}
+.cp-leg i.inicio{width:8px;height:8px;flex:none;align-self:center;border-radius:50%;background:#FFD24A}   /* nome próprio: "ponto" é a classe do item da lista de pontos iniciais */
 .cp-zctl{display:flex;gap:6px}.cp-zctl button{min-width:34px;font:12px var(--f-num)}
 .cp-arvore{cursor:default;background:transparent;border-style:dashed}.cp-arvore:hover{transform:none;background:transparent;border-color:var(--fio)}
 .cp-tree{display:flex;flex-direction:column;gap:5px;margin:8px 0 6px;font:11px var(--f-num);color:#d6e6cf}
@@ -9524,7 +9524,7 @@ function abrirCamadas(){
 function cpAmpliar(i){
   const n=CP.cards.length; i=(i+n)%n; CP.i=i; const x=CP.cards[i];
   $('#cpZNome').textContent=x.n; $('#cpZTit').textContent=x.t; $('#cpZDesc').textContent=x.d;
-  $('#cpZLeg').innerHTML=x.l.join('')+'<span class="cp-leg"><i class="obst"></i>obstáculo</span><span class="cp-leg"><i class="ponto"></i>ponto inicial</span>';
+  $('#cpZLeg').innerHTML=x.l.join('')+'<span class="cp-leg"><i class="obst"></i>obstáculo</span><span class="cp-leg"><i class="inicio"></i>ponto inicial</span>';
   $('#cpZPos').textContent=(i+1)+' / '+n;
   $('#cpZArte').innerHTML=svgCamada(x.g,{grande:true});
   CP.vb=null;
