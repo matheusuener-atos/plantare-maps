@@ -2365,7 +2365,25 @@ function chegadaNoAnel(anel, p, u, P){
   return r;
 }
 /** caminho fim-de-linha → bordadura → começo-de-linha, com as duas curvas arredondadas */
-function manobraEntre(anel, fim, ini, P, sentidos){
+/* Índice do que já foi traçado, em grade de 20 m: serve para recusar manobra que cruzaria o
+   percurso. O mesmo critério do planejador de retas, agora também no de curvas de nível. */
+function indiceCruz(){
+  const CEL=20, g=new Map();
+  const inserir=pts=>{ if(!pts||pts.length<2) return;
+    for(let i=1;i<pts.length;i++){ const a=pts[i-1], b=pts[i];
+      const x0=Math.floor(Math.min(a[0],b[0])/CEL), x1=Math.floor(Math.max(a[0],b[0])/CEL);
+      const y0=Math.floor(Math.min(a[1],b[1])/CEL), y1=Math.floor(Math.max(a[1],b[1])/CEL);
+      for(let x=x0;x<=x1;x++) for(let y=y0;y<=y1;y++){ const ch=x+'|'+y; let l=g.get(ch); if(!l) g.set(ch,l=[]); l.push([a,b]); } } };
+  const cruza=pts=>{ if(!pts||pts.length<2||!g.size) return false;
+    for(let i=1;i<pts.length;i++){ const a=pts[i-1], b=pts[i];
+      const x0=Math.floor(Math.min(a[0],b[0])/CEL), x1=Math.floor(Math.max(a[0],b[0])/CEL);
+      const y0=Math.floor(Math.min(a[1],b[1])/CEL), y1=Math.floor(Math.max(a[1],b[1])/CEL);
+      for(let x=x0;x<=x1;x++) for(let y=y0;y<=y1;y++){ const l=g.get(x+'|'+y); if(!l) continue;
+        for(const sg of l) if(cruzaSeg(a,b,sg[0],sg[1])!=null) return true; } }
+    return false; };
+  return {inserir, cruza};
+}
+function manobraEntre(anel, fim, ini, P, sentidos, cruza){
   const cA=chegadaNoAnel(anel, fim.p, fim.u, P);
   const cB=chegadaNoAnel(anel, ini.p, [-ini.u[0],-ini.u[1]], P);
   let melhor=null;
@@ -2380,7 +2398,7 @@ function manobraEntre(anel, fim, ini, P, sentidos){
     const raio=Math.min(r1.raio, r2.raio);
     const apertada = raio < P.rMin-0.05;
     const final=suavizarAberto(r1.pts, 3), comp=plen(final);
-    const custo=comp + (apertada?PENALIDADE_APERTO:0) + (cA.ok&&cB.ok?0:1e5);
+    const custo=comp + (apertada?PENALIDADE_APERTO:0) + (cA.ok&&cB.ok?0:1e5) + ((cruza && cruza(final))?1e7:0);
     if(!melhor||custo<melhor.custo) melhor={pts:final, comp, custo, raio, apertada, dir, semAnel:!(cA.ok&&cB.ok)};
   }
   return melhor;
@@ -3578,6 +3596,7 @@ function planejarOtimizado(campo, P, abastecimento, lateral){
     });
     legs.unshift(...extras);
   }
+  const IX=indiceCruz(); let atrasada=null;   // a linha anterior entra no índice depois da manobra dela
   ordem.forEach((o,i)=>{
     const novos=(o.s.ida.usados||[]).filter(ia=>!obstaculoRodeado.has(ia));
     if(novos.length){
@@ -3586,8 +3605,10 @@ function planejarOtimizado(campo, P, abastecimento, lateral){
     }
     const pp=ponta(o.s, o.inv);
     let lig;
-    if(i>0){ const ant=ponta(ordem[i-1].s, ordem[i-1].inv); lig=manobraEntre(anel, ant.fim, pp.ini, P); }
+    if(i>0){ const ant=ponta(ordem[i-1].s, ordem[i-1].inv); lig=manobraEntre(anel, ant.fim, pp.ini, P, null, IX.cruza); }
     else lig=acesso;
+    if(atrasada) IX.inserir(atrasada);
+    IX.inserir(lig.pts); atrasada=pp.pts;
     const leg={t:'m', tipo:i===0?'acesso':'manobra', p:lig.pts, raio:Math.min(lig.raio, raioMedido(lig.pts))};
     leg.apertada=lig.apertada||apertada(lig.pts);
     legs.push(leg);
@@ -6042,7 +6063,21 @@ const TAREFAS={
   },
   plano(d){
     const c=nucGarantir(d);
-    if(!(d.P.curvas && d.P.curvas.length)) return pl4Plano(c, d);
+    if(!(d.P.curvas && d.P.curvas.length)){
+      let r=pl4Plano(c, d);
+      /* Nenhum plano sai com garfo se existir alternativa: "pular uma/duas" obriga as manobras a
+         disputarem o mesmo trecho da cabeceira e elas acabam se cruzando. Quando isso acontece,
+         o plano volta para vai e vem e avisa o motivo. */
+      const xs=p=>((p&&p.problemas)||[]).filter(q=>q.tipo==='cruzamento').length;
+      if(!r.erro && xs(r) && d.padrao && d.padrao!=='vaivem'){
+        const r2=pl4Plano(c, Object.assign({}, d, {padrao:'vaivem'}));
+        if(r2 && !r2.erro && xs(r2)<xs(r)){
+          r2.otimizados=Object.assign({}, r2.otimizados, {padraoTrocado:{de:d.padrao, xAntes:xs(r), xDepois:xs(r2)}});
+          r=r2;
+        }
+      }
+      return r;
+    }
     let pl=planejarComPadrao(c, d.P, d.abast, d.lateral, d.padrao);
     let repasses=0, extras=[];
     if(pl.legs.length && d.P.repasse>0){
@@ -8685,6 +8720,11 @@ function atualizarPainel(){
       +met(fmt(m.trabalho_m/1000,1)+' km','aplicando','neutro')+met(fmt(m.deslocamento_m/1000,1)+' km','manobra e deslocamento','neutro')
       +'</div>';
     // deslocamentos longos: a máquina atravessa de uma região para outra pela bordadura
+    const trocou=E.plano.otimizados&&E.plano.otimizados.padraoTrocado;
+    if(trocou) h+='<div class="pref-fora"><div class="cab"><b>Ordem das linhas trocada</b>'
+      +'<button type="button" class="link" data-passo="direcao">Ver a ordem</button></div>'
+      +'<div class="pref-fora-item"><b>'+(trocou.de==='pular'?'Pular uma':'Pular duas')+' criava '+trocou.xAntes+' cruzamento'+(trocou.xAntes===1?'':'s')+'</b>'
+      +'<span>As manobras disputavam o mesmo trecho da cabeceira e se cruzavam, e no cruzamento a máquina não sabe seguir. O plano saiu em vai e vem.</span></div></div>';
     const saltos=(E.plano.otimizados&&E.plano.otimizados.saltos)||[], regioes=(E.plano.otimizados&&E.plano.otimizados.regioes)||0;
     if(saltos.length) h+='<div class=pref-fora><div class=cab><b>'+saltos.length+(saltos.length===1?' deslocamento longo':' deslocamentos longos')+'</b>'
       +'<button type=button class=link data-passo=direcao>Trocar a direção</button></div>'
