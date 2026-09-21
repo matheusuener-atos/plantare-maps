@@ -1,0 +1,7 @@
+{
+  "name": "plantare-maps-testes",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node regras.mjs" },
+  "devDependencies": { "playwright-core": "^1.47.0" }
+}

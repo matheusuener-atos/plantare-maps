@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>talhao-teste</name>
+<Placemark><name>Bordadura base</name><description>Não é uma bordadura</description>
+<Polygon><outerBoundaryIs><LinearRing><coordinates>-51.8771330,-6.6971395,0 -51.8138227,-6.6971395,0 -51.8138227,-6.6338140,0 -51.8771330,-6.6338140,0 -51.8771330,-6.6971395,0</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>
+<Placemark><name>Talhão 1</name>
+<Polygon><outerBoundaryIs><LinearRing><coordinates>-51.8500000,-6.6700000,0 -51.8443925,-6.6703619,0 -51.8386946,-6.6698191,0 -51.8381519,-6.6665623,0 -51.8393277,-6.6634865,0 -51.8436690,-6.6631247,0 -51.8476485,-6.6637579,0 -51.8503618,-6.6662005,0 -51.8500000,-6.6700000,0</coordinates></LinearRing></outerBoundaryIs>
+<innerBoundaryIs><LinearRing><coordinates>-51.8449352,-6.6672861,0 -51.8442116,-6.6672861,0 -51.8442116,-6.6665623,0 -51.8449352,-6.6665623,0 -51.8449352,-6.6672861,0</coordinates></LinearRing></innerBoundaryIs></Polygon></Placemark>
+<Placemark><name>AB Reta</name><LineString><coordinates>-51.8490956,-6.6692763,0 -51.8391468,-6.6685526,0</coordinates></LineString></Placemark>
+</Document></kml>
