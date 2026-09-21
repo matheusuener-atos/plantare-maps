@@ -3694,22 +3694,34 @@ function corrigirUm(c,P,legs0,pr,partida){
   if(pr.tipo==='cruzamento'){
     const i=pr.leg;
     const recado='Esse X vem do espaçamento menor que o diâmetro de giro. Aumente as voltas de bordadura ou refaça a manobra à mão pela bordadura.';
-    if(i==null || i<1 || !legs0[i] || legs0[i].t!=='m' || !legs0[i-1] || !legs0[i+1]) return {ok:false, motivo:recado};
+    /* o garfo é feito por duas manobras: se refazer a do X não resolver, tenta a outra que passa por ali */
+    const perto=(q,pts)=>{ let m=Infinity; for(let k=1;k<pts.length;k++){ const a=pts[k-1], b=pts[k], dx=b[0]-a[0], dy=b[1]-a[1], L2=dx*dx+dy*dy||1e-9;
+      const t=Math.max(0,Math.min(1,((q[0]-a[0])*dx+(q[1]-a[1])*dy)/L2)), d=Math.hypot(a[0]+dx*t-q[0], a[1]+dy*t-q[1]); if(d<m) m=d; } return m; };
+    const alvos=[];
+    if(i!=null && i>=1 && legs0[i] && legs0[i].t==='m') alvos.push(i);
+    if(pr.ir) legs0.forEach((l,k)=>{ if(k===i || l.t!=='m' || !l.p || l.p.length<2) return;
+      if(legs0[k-1] && legs0[k+1] && legs0[k-1].t==='w' && legs0[k+1].t==='w' && perto(pr.ir, l.p)<3) alvos.push(k); });
+    if(!alvos.length) return {ok:false, motivo:recado};
     const base=nucProblemas(c,P,legs0), conhecidos=new Set(base.map(assinatura));
     const S=P.esp||P.faixa||30, R0=Math.max(1,P.rMin||1), vistos=new Set();
+    const planos=[];
     for(const tipo of ['auto','u','guarda','gota'])
-      for(const raio of [0, +(R0*1.2).toFixed(2), +(R0*1.6).toFixed(2), +(S/2).toFixed(2)]){
-        const ch=tipo+'|'+raio; if(vistos.has(ch)) continue; vistos.add(ch);
-        let r; try{ r=pecaTrocarManobra(c,P,legs0,i,{tipo, raio}); }catch(e){ continue; }
+      for(const raio of [0, +(R0*1.2).toFixed(2), +(R0*1.6).toFixed(2), +(S/2).toFixed(2)]) planos.push({tipo, raio});
+    planos.push({tipo:'auto', raio:0, ctx:legs0, viaAnel:true});   // última saída: dar a volta pela bordadura
+    for(const alvo of alvos)
+      for(const op of planos){
+        if(!legs0[alvo-1] || !legs0[alvo+1] || legs0[alvo-1].t!=='w' || legs0[alvo+1].t!=='w') continue;
+        const ch=alvo+'|'+op.tipo+'|'+op.raio+'|'+(op.viaAnel?'anel':''); if(vistos.has(ch)) continue; vistos.add(ch);
+        let r; try{ r=pecaTrocarManobra(c,P,legs0,alvo,Object.assign({},op,op.viaAnel?{ctx:legs0}:{})); }catch(e){ continue; }
         if(!r || !r.ok) continue;
         const legs=legs0.map(l=>Object.assign({},l));
-        legs[i-1]=Object.assign({},legs[i-1],{p:r.A}); legs[i+1]=Object.assign({},legs[i+1],{p:r.B});
-        legs[i]=Object.assign({},legs[i],{p:r.pts, raio:r.raio, apertada:false, manual:true, peca:'manobra', estilo:r.tipo});
+        legs[alvo-1]=Object.assign({},legs[alvo-1],{p:r.A}); legs[alvo+1]=Object.assign({},legs[alvo+1],{p:r.B});
+        legs[alvo]=Object.assign({},legs[alvo],{p:r.pts, raio:r.raio, apertada:false, manual:true, peca:'manobra', estilo:r.tipo});
         const agora=nucProblemas(c,P,legs);
         if(agora.some(q=>q.tipo==='cruzamento' && q.ir && pr.ir && dist(q.ir,pr.ir)<10)) continue;   // o X ficou onde estava
         if(agora.some(q=>q.grav==='erro' && !conhecidos.has(assinatura(q)))) continue;               // trocou um erro por outro
-        return {ok:true, legs, antes:[legs0[i].p], depois:[r.pts],
-          resumo:{tipo:'manobra', modo:'troca', raio:r.raio, extra:plen(r.pts)-plen(legs0[i].p), enc:0}};
+        return {ok:true, legs, antes:[legs0[alvo].p], depois:[r.pts],
+          resumo:{tipo:'manobra', modo:'troca', raio:r.raio, extra:plen(r.pts)-plen(legs0[alvo].p), enc:0}};
       }
     return {ok:false, motivo:recado};
   }
@@ -5829,12 +5841,12 @@ function pecaGeoManobra(c,P,A,B,ctx,op){
   // longe (não é a linha vizinha) ou sem curva direta boa: vai pelo rastro da bordadura e das linhas
   const longe=dist(A[A.length-1],B[0])>Math.max(2.5*(P.esp||P.faixa), 8*R0)+1;
   if(m) m.longa=longe;
-  if(ctx && (!m || (tipo==='auto' && (m.invade || m.laco)) || longe)){
+  if(ctx && ((op&&op.viaAnel) || !m || (tipo==='auto' && (m.invade || m.laco)) || longe)){
     // primeiro pela volta de dentro da bordadura (rápido); se não der, pela rede do rastro
     let anelPts=null, vmax=0; for(const l of ctx) if(l.t==='w' && l.tipo==='bordadura' && (l.volta||1)>=vmax){ vmax=l.volta||1; anelPts=l.p; }
     const va=anelPts?pecaViaAnel(c,P,A,B,anelPts):null;
     const rr=va || pecaRota(c,P,A,B,ctx);
-    if(rr && (!m || m.invade || m.laco || longe || plen(rr.pts)<(m.comp||plen(m.pts))*3+200)){ rr.tv=pl4TempoVolante(rr.pts,P); m=rr; }
+    if(rr && ((op&&op.viaAnel) || !m || m.invade || m.laco || longe || plen(rr.pts)<(m.comp||plen(m.pts))*3+200)){ rr.tv=pl4TempoVolante(rr.pts,P); m=rr; }
   }
   if(!m){
     const nomes={guarda:'cabo de guarda-chuva', u:'meia-volta', gota:'gota'};
@@ -5873,7 +5885,7 @@ function pecaGeoRetorno(c,P,A,anelPts,clique,fim,pref){
 function pecaTrocarManobra(c,P,legs,i,op){
   const A=legs[i-1], M=legs[i], B=legs[i+1];
   if(!M || M.t!=='m' || !A || !B || A.t!=='w' || B.t!=='w') return {ok:false, motivo:'Selecione uma manobra entre duas linhas.'};
-  const r=pecaGeoManobra(c,P,A.p,B.p,null,op);
+  const r=pecaGeoManobra(c,P,A.p,B.p,(op&&op.ctx)||null,op);
   if(!r.ok) return r;
   if(r.invade) return {ok:false, motivo:'Assim a manobra passaria da cerca ou de um obstáculo.'};
   if(r.laco) return {ok:false, motivo:'Com esse raio a manobra daria um laço.'};
