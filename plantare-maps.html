@@ -8251,6 +8251,10 @@ const PREF_ARTE=(()=>{
   const duas=()=>linha(28,56,34)+linha(68,34,56);                       // as duas linhas vizinhas, vistas de cima
   const man=(d,traco)=>'<path d="'+d+'" stroke="'+M+'" stroke-width="2.4"'+(traco?' stroke-dasharray="3 4" opacity=".45"':'')+'/>';
   const faixa=(x,w,cor)=>'<rect x="'+x+'" y="30" width="'+w+'" height="30" fill="'+(cor||V)+'"/>';   // faixa aplicada
+  // um talhão de mentira com as passadas já feitas, para os desenhos de volta e de apoio
+  const talhao=()=>'<path d="M14 12H84V50H14Z" fill="rgba(200,243,180,.05)" stroke="#5BE38A" stroke-width="2" stroke-linejoin="round"/>';
+  const aplicadas=()=>'<path d="M20 20H78M20 27H78M20 34H78M20 41H78" stroke="'+L+'" stroke-width="1.6" opacity=".55"/>';
+  const quatroLinhas=()=>'<path d="M16 14H84M16 26H84M16 38H84M16 50H84" stroke="'+L+'" stroke-width="2.4"/>';
   const U='M28 34A20 20 0 0 1 68 34';                                   // meia-volta
   const GOTA='M28 34C28 18 8 20 10 31C12 42 32 40 46 33C54 29 60 28 68 34';   // laço que cruza o aplicado
   const GUARDA='M28 34C28 28 18 26 18 31C18 36 26 38 32 32C38 26 38 16 50 16C62 16 68 26 68 34';   // gancho com barriguinha
@@ -8311,11 +8315,26 @@ const PREF_ARTE=(()=>{
     bordDentro: svg('<rect x="24" y="10" width="48" height="40" rx="3" stroke="'+L+'" stroke-width="2.2" opacity=".9"/>'
       +'<path d="M30 18h36M30 26h36M30 34h36" stroke="'+L+'" stroke-width="1.6" opacity=".55"/>'
       +'<path d="M30 42h36" stroke="#5BE38A" stroke-width="2" opacity=".9"/>'),
-    // volta ao ponto inicial
-    retCurto: svg('<rect x="10" y="10" width="76" height="40" rx="3" stroke="'+L+'" stroke-width="2" opacity=".6"/>'
-      +'<path d="M78 18V42" stroke="'+L+'" stroke-width="2.2" opacity=".5"/><path d="M78 20H22" stroke="'+M+'" stroke-width="2.4" stroke-dasharray="5 4"/><circle cx="18" cy="20" r="5" fill="#FFD24A"/>'),
-    retBord: svg('<rect x="10" y="10" width="76" height="40" rx="3" stroke="'+L+'" stroke-width="2" opacity=".6"/>'
-      +'<path d="M78 18V42" stroke="'+L+'" stroke-width="2.2" opacity=".5"/><path d="M78 44H16V22" stroke="'+M+'" stroke-width="2.4" stroke-dasharray="5 4"/><circle cx="18" cy="20" r="5" fill="#FFD24A"/>')
+    // volta ao ponto inicial: o talhão com as passadas feitas e o caminho de volta até a bandeira
+    retCurto: svg(talhao()+aplicadas()+'<path d="M78 44C60 44 46 30 30 22" stroke="'+M+'" stroke-width="2.6" stroke-dasharray="5 4" fill="none"/>'
+      +'<circle cx="24" cy="20" r="4.5" fill="#FFD24A"/><circle cx="78" cy="44" r="3" fill="'+M+'"/>'),
+    retBord: svg(talhao()+aplicadas()+'<path d="M78 44H84V14H24" stroke="'+M+'" stroke-width="2.6" stroke-dasharray="5 4" fill="none"/>'
+      +'<circle cx="24" cy="20" r="4.5" fill="#FFD24A"/><circle cx="78" cy="44" r="3" fill="'+M+'"/>'),
+    // ordem das linhas (tela 01)
+    ordVaivem: svg(quatroLinhas()+man('M84 14A6 6 0 0 1 84 26')+man('M12 26A6 6 0 0 0 12 38')+man('M84 38A6 6 0 0 1 84 50')),
+    ordPular: svg(quatroLinhas()+man('M84 14A12 12 0 0 1 84 38')+man('M12 38A12 12 0 0 0 12 62')+man('M84 26A12 12 0 0 1 84 50')),
+    ordPular2: svg(quatroLinhas()+man('M84 14A18 18 0 0 1 84 50')+man('M12 26A18 18 0 0 0 12 62')),
+    // ao terminar (tela 02)
+    fimVoltar: svg(talhao()+aplicadas()+'<path d="M78 44C60 44 46 30 30 22" stroke="'+M+'" stroke-width="2.6" stroke-dasharray="5 4" fill="none"/>'
+      +'<circle cx="24" cy="20" r="4.5" fill="#FFD24A"/>'),
+    fimParar: svg(talhao()+aplicadas()+'<circle cx="24" cy="20" r="4.5" fill="#FFD24A"/>'
+      +'<path d="M74 40v8" stroke="'+O+'" stroke-width="3"/><circle cx="78" cy="44" r="3" fill="'+M+'"/>'),
+    // lado de apoio (tela 02)
+    apoioPonto: svg(talhao()+aplicadas()+'<circle cx="24" cy="20" r="4.5" fill="#FFD24A"/>'
+      +'<rect x="4" y="30" width="14" height="9" rx="1.5" fill="rgba(233,180,90,.35)" stroke="'+M+'" stroke-width="1.6"/>'
+      +'<path d="M8 20V30" stroke="'+M+'" stroke-width="2.2" stroke-dasharray="3 3"/>'),
+    apoioMapa: svg(talhao()+aplicadas()+'<path d="M14 50H84" stroke="'+M+'" stroke-width="3.4"/>'
+      +'<path d="M46 56l5-9 5 9" fill="none" stroke="'+L+'" stroke-width="2"/>')
   };
 })();
 /* Divide o percurso do mesmo jeito que o Worker faz nos arquivos (ver segmentarPercurso em
@@ -8353,10 +8372,40 @@ function percursoSegmentos(){
   return comVolta(feito(blocos).map(x=>Object.assign(x,{nome:'Bloco '+String(x.n).padStart(2,'0')})));
 }
 /* etapa 03: as decisões que antes o código tomava sozinho */
-function prefGrupo(titulo, campo, valor, ops, nota){
+/* Miniatura da direção: o contorno do seu talhão com as linhas no rumo da opção.
+   É desenhada com a geometria real — o que você vê é o que o plano vai fazer. */
+let miniDirN=0;
+function miniDirecao(o){
+  if(!E.campo || !E.campo.bounds || o.rumo==null) return bussola(o.rumo);
+  const b=E.campo.bounds, W=b[2]-b[0], H=b[3]-b[1], m=Math.max(W,H)*0.05;
+  const esc=Math.min(86/(W+2*m), 50/(H+2*m)), x0=b[0]-m, y1=b[3]+m;
+  const X=x=>(5+(x-x0)*esc).toFixed(1), Y=y=>(5+(y1-y)*esc).toFixed(1);
+  const cam=pts=>{ const passo=Math.max(1,Math.floor(pts.length/80)); let d='';
+    for(let i=0;i<pts.length;i+=passo) d+=(d?'L':'M')+X(pts[i][0])+' '+Y(pts[i][1]); return d+'Z'; };
+  const cerca=(E.campo.cerca||[]).map(cam).join('');
+  if(!cerca) return bussola(o.rumo);
+  const id='mdir'+(++miniDirN);
+  const cx=(b[0]+b[2])/2, cy=(b[1]+b[3])/2, R=Math.hypot(W,H)/2, dd=Math.max(W,H)/9;
+  const rad=o.rumo*RAD, ux=Math.sin(rad), uy=Math.cos(rad), nx=-uy, ny=ux;
+  let linhas='';
+  if(o.curvas || o.id==='nivel'){   // em nível: as linhas acompanham o terreno, então vão onduladas
+    for(let t=-R;t<=R;t+=dd){ const px=cx+nx*t, py=cy+ny*t;
+      let d=''; for(let k=-R;k<=R;k+=Math.max(6,R/8)){ const on=Math.sin(k/Math.max(8,R/3))*dd*0.35;
+        d+=(d?'L':'M')+X(px+ux*k+nx*on)+' '+Y(py+uy*k+ny*on); }
+      linhas+=d; }
+  } else for(let t=-R;t<=R;t+=dd){ const px=cx+nx*t, py=cy+ny*t;
+    linhas+='M'+X(px-ux*R)+' '+Y(py-uy*R)+'L'+X(px+ux*R)+' '+Y(py+uy*R); }
+  return '<span class="opcao-mini"><svg viewBox="0 0 96 60" aria-hidden="true" fill="none">'
+    +'<defs><clipPath id="'+id+'"><path d="'+cerca+'"/></clipPath></defs>'
+    +'<path d="'+cerca+'" fill="rgba(200,243,180,.07)" stroke="#8DF2B0" stroke-width="1.6" stroke-linejoin="round"/>'
+    +'<g clip-path="url(#'+id+')"><path d="'+linhas+'" stroke="#EDF0E6" stroke-width="1.5" opacity=".8"/></g>'
+    +'</svg></span>';
+}
+function prefGrupo(titulo, campo, valor, ops, nota, attr){
+  const dado=o=>attr ? 'data-'+attr+'="'+esc(String(o.v))+'"' : 'data-pref="'+campo+'" data-val="'+esc(String(o.v))+'"';
   return '<div class="pref-grupo"><div class="rot">'+esc(titulo)+'</div>'
     +'<div class="pref-lista" role="radiogroup" aria-label="'+esc(titulo)+'">'
-    +ops.map(o=>'<button type="button" class="pref-op'+(String(o.v)===String(valor)?' on':'')+'" role="radio" aria-checked="'+(String(o.v)===String(valor))+'" data-pref="'+campo+'" data-val="'+esc(String(o.v))+'">'
+    +ops.map(o=>'<button type="button" class="pref-op'+(String(o.v)===String(valor)?' on':'')+'" role="radio" aria-checked="'+(String(o.v)===String(valor))+'" '+dado(o)+'>'
       +'<span class="pref-mini">'+(PREF_ARTE[o.a]||'')+'</span>'
       +'<span class="pref-txt"><b>'+esc(o.t)+'</b><span>'+esc(o.d)+'</span>'+(o.av?'<span class="pref-av">'+esc(o.av)+'</span>':'')+'</span></button>').join('')
     +'</div>'+(nota?'<p class="nota">'+esc(nota)+'</p>':'')+'</div>';
@@ -8498,7 +8547,7 @@ function atualizarPainel(){
         m+=pilulaDeclive(o);
         const indisp=o.desabilitada, tag=indisp?'div':'button';
         h+='<'+tag+(indisp?' role="group"':' type="button" data-opcao="'+o.id+'" aria-pressed="'+(E.opcaoSel===o.id)+'"')+' class="opcao'+(indisp?' indisponivel':'')+'">'
-          +bussola(o.rumo)
+          +miniDirecao(o)
           +'<span class="t"><span>'+esc(o.titulo)+'</span>'+(o.rumo!=null?'<span class="num">'+fmt(o.rumo%180,0)+'°</span>':'')+'</span>'
           +'<span class="d">'+esc(o.desc)+(o.extra?' '+esc(o.extra):'')+'</span>'
           +(indisp && o.id==='nivel' && ANALISE.relevo==='erro' ? '<span class="m"><button type="button" class="link" data-acao="relevo">Tentar de novo</button></span>' : '')
@@ -8511,11 +8560,11 @@ function atualizarPainel(){
           +' · <button type="button" class="link" data-acao="retaAB">'+(E.ab?'Trocar':'Digitar')+' reta AB</button>'
           +'<input type="file" id="arqGuia" accept=".kml,.kmz,.shp,.json,.geojson" hidden></p>';
       const recomenda=pularRecomendado();
-      h+='<div class="padrao"><div class="rot">Ordem das linhas</div><div class="seg" role="group" aria-label="Ordem das linhas">'
-        +'<button type="button" data-padrao="vaivem" aria-pressed="'+(E.padrao==='vaivem')+'">Vai e vem</button>'
-        +'<button type="button" data-padrao="pular" aria-pressed="'+(E.padrao==='pular')+'">Pular uma</button>'
-        +'<button type="button" data-padrao="pular2" aria-pressed="'+(E.padrao==='pular2')+'">Pular duas</button></div>'
-        +'<p class="nota">'+esc(motivoDoPadrao())+(E.padraoManual?' <b>Você escolheu à mão.</b>':'')+'</p></div>';
+      h+=prefGrupo('Ordem das linhas','padrao',E.padrao,[
+        {v:'vaivem', a:'ordVaivem', t:'Vai e vem', d:'Uma linha ao lado da outra, na ordem. Menos rodado quando a curva cabe.'},
+        {v:'pular', a:'ordPular', t:'Pular uma', d:'Trabalha uma sim, uma não, e volta nas que faltaram. A curva fica com o dobro de espaço.'},
+        {v:'pular2', a:'ordPular2', t:'Pular duas', d:'Salta duas linhas por vez: para máquina grande em espaçamento apertado.'}],
+        motivoDoPadrao()+(E.padraoManual?' Você escolheu à mão.':''), 'padrao');
       const sel=E.opcoes.find(o=>o.id===E.opcaoSel), pode=sel && (sel.rumo!=null || (sel.curvas && (E.curvas||[]).length));
       rodape='<button class="btn btn-luz btn-bloco" data-acao="continuar"'+(pode?'':' disabled')+'>'
         +(!sel?'Escolha uma direção':sel.id==='mapa'&&sel.rumo==null?'Toque dois pontos na divisa':'Escolher o ponto inicial')+'</button>';
@@ -8525,13 +8574,14 @@ function atualizarPainel(){
   else if(E.passo==='ponto'){
     h+=etapasHtml()+cabCompacto()+resumoDirecao();
     h+='<h2>Ponto inicial</h2><p class="sub">Escolha onde começar e abastecer. Você também pode arrastar o ponto na divisa.</p>';
-    h+='<div class="padrao" style="margin:4px 0 12px"><div class="rot">Ao terminar</div><div class="seg" role="group" aria-label="Fim do trabalho">'
-      +'<button type="button" data-fim="inicio" aria-pressed="'+(E.fim==='inicio')+'">Voltar ao ponto inicial</button>'
-      +'<button type="button" data-fim="ultima" aria-pressed="'+(E.fim==='ultima')+'">Parar na última linha</button></div>'
-      +'<p class="nota">'+(E.fim==='inicio'?'Retorna pelo trajeto mais curto disponível no rastro.':'Encerra na última linha.')+'</p></div>';
-    h+='<div class="padrao" style="margin:0 0 12px"><div class="rot">Lado de apoio (caminhão-tanque)</div><div class="seg" role="group" aria-label="Lado de apoio">'
-      +'<button type="button" data-apoio="ponto" aria-pressed="'+(!E.apoio && !E.escolhendoApoio)+'">Lado do ponto inicial</button>'
-      +'<button type="button" data-apoio="mapa" aria-pressed="'+(!!E.apoio || !!E.escolhendoApoio)+'">'+(E.apoio?'Trocar no mapa':'Escolher no mapa')+'</button></div>'
+    h+=prefGrupo('Ao terminar','fim',E.fim,[
+      {v:'inicio', a:'fimVoltar', t:'Voltar ao ponto inicial', d:'A máquina volta até onde começou, pelo rastro já aplicado.'},
+      {v:'ultima', a:'fimParar', t:'Parar na última linha', d:'Encerra onde terminar a última passada, sem volta.'}],
+      E.fim==='inicio'?'Na etapa 03 você escolhe se essa volta sai em arquivo próprio.':'', 'fim');
+    h+=prefGrupo('Lado de apoio (caminhão-tanque)','apoio',(!E.apoio && !E.escolhendoApoio)?'ponto':'mapa',[
+      {v:'ponto', a:'apoioPonto', t:'Lado do ponto inicial', d:'O caminhão acompanha pelo lado onde você começou.'},
+      {v:'mapa', a:'apoioMapa', t:E.apoio?'Trocar no mapa':'Escolher no mapa', d:'Toque num lado da cerca: é por ele que o caminhão acompanha.'}], '', 'apoio')
+      +'<div class="padrao" style="margin:0 0 12px">'
       +'<p class="nota">'+(E.escolhendoApoio?'<b>Toque num lado da cerca.</b> Ele acende quando o mouse passa por cima. Esc cancela.':E.apoio?'Escolhido: '+esc(E.apoio.nome||'lado marcado')+' (tracejado amarelo no mapa).':'O caminhão acompanha pelo lado onde está o ponto inicial.')+'</p></div>';
     const lista=pontosOrdenados(), melhor=lista.find(p=>p.sugerido);
     h+='<div class="pontos">';
@@ -13326,6 +13376,11 @@ dialog.pergunta .acoes .btn{min-height:42px;padding:0 18px;font-size:13.5px}
 .pref-op{display:flex;align-items:center;gap:12px;width:100%;text-align:left;padding:10px 11px;border:1px solid var(--fio);border-radius:4px;background:transparent;color:var(--palha);cursor:pointer;transition:border-color .2s,background .2s}
 .pref-op:hover{border-color:#c8f3b455;background:rgba(200,243,180,.05)}
 .pref-op.on{border-color:#c8f3b4;background:rgba(200,243,180,.1)}
+.opcao:has(.opcao-mini){grid-template-columns:66px 1fr}
+@media(max-width:760px){.opcao:has(.opcao-mini){grid-template-columns:58px 1fr}}
+.opcao-mini{grid-row:1 / span 3;align-self:center;display:block;width:66px;height:42px;border:1px solid var(--fio);border-radius:3px;background:rgba(4,12,8,.4);overflow:hidden}
+.opcao-mini svg{display:block;width:100%;height:100%}
+@media(max-width:760px){.opcao-mini{width:58px;height:38px}}
 .pref-op .pref-mini{flex:none;width:66px;height:42px;display:block;border:1px solid var(--fio);border-radius:3px;background:rgba(4,12,8,.4);overflow:hidden}
 .pref-op.on .pref-mini{border-color:#c8f3b455}
 .pref-op .pref-mini svg{display:block;width:100%;height:100%}
