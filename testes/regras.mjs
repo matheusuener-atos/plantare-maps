@@ -99,6 +99,7 @@ for (const arquivo of talhoes) {
                   if (dd < melhor) { melhor = dd; s = acc + Ls*t; } acc += Ls; }
                 if (melhor <= 1.5 && Math.min(s, total - s) > 3) n++; });
             }); return n; })(),
+          motorCruz: probs.filter(q => q.tipo === 'cruzamento').length,   // o que o app relata na revisão
           cruzamentos: (() => {
             // mesma definição do app: garfo é quando os caminhos se separam de pelo menos um lado.
             // Andar por cima (juntos antes e depois) não é garfo — a máquina segue reto.
@@ -130,7 +131,7 @@ for (const arquivo of talhoes) {
       });
 
       const erra = [];
-      if (r.cruzamentos) erra.push('R1 bifurcação (' + r.cruzamentos + ')');
+      if (r.motorCruz) erra.push('R1 o app relata bifurcação (' + r.motorCruz + ')');
       if (r.invasoes) erra.push('R2 invasão (' + r.invasoes + ')');
       if (r.raioCurto) erra.push('R3 raio abaixo do da máquina (' + r.raioCurto + ')');
       if (r.pref.obst === 'desviar' && r.voltasObst) erra.push('R4 volta completa com "desviar" (' + r.voltasObst + ')');
