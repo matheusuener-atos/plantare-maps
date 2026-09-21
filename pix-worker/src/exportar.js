@@ -561,6 +561,12 @@ function montarArquivos(nome, rings, passes, proj, crs, extra){
       files.push({name:nome+'_rota_'+su+'.kml',data:un}, {name:nome+'_rota_'+su+'.kmz',data:zipBytes([{name:nome+'_rota_'+su+'.kml',data:un}])});
     }
   }
+  // a volta ao ponto inicial, em arquivo próprio (bordadura, percurso e retorno: três leituras no monitor)
+  if((x.retorno||[]).length){
+    const segsR=x.retorno.map((pts,i)=>({n:i+1, nome:x.retorno.length>1?'Retorno '+(i+1):'Retorno', pts, ha:0, litros:0, horas:0}));
+    const rk=enc.encode(carimbar(kmlPercurso(nome+' · retorno', segsR, proj)));
+    files.push({name:nome+'_retorno.kml',data:rk}, {name:nome+'_retorno.kmz',data:zipBytes([{name:nome+'_retorno.kml',data:rk}])});
+  }
   // o KMZ do plano completo também entra no pacote
   files.push({name:nome+'.kmz',data:kmzBytes});
   /* cada camada também sai como shapefile próprio (shp, shx, dbf, prj), em UTM e em WGS 84 */
@@ -608,6 +614,9 @@ function montarArquivos(nome, rings, passes, proj, crs, extra){
   const regBord=(x.bordadura||[]).map((pts,i)=>({pts, camada:'bordadura', num:0, parte:0, nome:'BORD'+(i+1)}));
   // percurso: as linhas AB com as manobras, na mesma camada
   camada('percurso', regPercurso.length?regPercurso:regAB.concat(regMan), camposJuntos, valoresJuntos);
+  // volta ao ponto inicial: camada própria
+  const regRetorno=(x.retorno||[]).map((pts,i)=>({pts, camada:'retorno', num:i+1, parte:0, nome:'Retorno'}));
+  camada('retorno', regRetorno, camposJuntos, valoresJuntos);
   // tudo junto: bordadura + linhas AB + manobras num arquivo só
   camada('tudo', regBord.concat(regAB, regMan), camposJuntos, valoresJuntos);
   return files;
@@ -619,14 +628,14 @@ function montarArquivos(nome, rings, passes, proj, crs, extra){
    ===================================================================== */
 const TODAS = ['linhas_ab', 'bordadura', 'percurso', 'manobras'];
 export const CAMADAS_DO_FORMATO = { kml: TODAS, kmz: TODAS, ab: ['bordadura', 'linhas_ab'], rota: ['percurso'], geojson: TODAS, csv: ['linhas_ab'] };
-const CAMADAS_DO_SHP = { bordadura: ['bordadura'], linhas_ab: ['linhas_ab'], manobras: ['manobras'], percurso: ['percurso'], tudo: TODAS };
+const CAMADAS_DO_SHP = { bordadura: ['bordadura'], linhas_ab: ['linhas_ab'], manobras: ['manobras'], percurso: ['percurso'], retorno: ['percurso'], tudo: TODAS };
 const cobre = (pagas, precisa) => precisa.every(c => pagas.includes(c));
 
 /* formato de cada arquivo que montarArquivos devolve */
 function formatoDo(nome) {
   if (nome.startsWith('shapefile/')) return 'shp';
   if (nome.endsWith('_ab.kml') || nome.endsWith('_ab.kmz')) return 'ab';
-  if (nome.indexOf('_rota.') >= 0) return 'rota';
+  if (/_rota[._]/.test(nome) || /_retorno[._]/.test(nome)) return 'rota';
   if (nome.endsWith('.kmz')) return 'kmz';
   if (nome.endsWith('.kml')) return 'kml';
   return null;
@@ -720,11 +729,18 @@ export function gerarPacote(e, licenca) {
     vTrab: Math.max(1, +sd.vTrab || 18), vMan: Math.max(1, +sd.vMan || 8),
     comBord: e.bordNoPercurso === true
   };
-  const segmentos = segmentarPercurso(legs, saida);
+  saida.retorno = ['arquivo', 'passo', 'junto'].includes(sd.retorno) ? sd.retorno : 'arquivo';
+  const legsRetorno = legs.filter(l => l.tipo === 'retorno');
+  const legsPercurso = saida.retorno === 'junto' ? legs : legs.filter(l => l.tipo !== 'retorno');
+  const segmentos = segmentarPercurso(legsPercurso, saida);
+  const soRetorno = legsRetorno.length ? segmentarPercurso(legsRetorno, Object.assign({}, saida, { modo: 'unico', comBord: false })) : [];
+  if (saida.retorno === 'passo' && soRetorno.length)
+    for (const g of soRetorno) segmentos.push(Object.assign({}, g, { n: segmentos.length + 1, nome: 'Retorno' }));
+  const retornoPts = saida.retorno === 'arquivo' ? soRetorno.map(g => g.pts) : [];
 
   const todos = montarArquivos(nome, rings, passAttrs(passes), proj, crs,
     { manobras, obstaculos: obst, bordadura, linhasAB, percurso: percursoContinuo(legs, e.bordNoPercurso === true), trechosPercurso: trechosDeTrabalho(legs, e.bordNoPercurso === true),
-      segmentos, umArquivoPorSegmento: saida.modo === 'trechos' || saida.modo === 'blocos',
+      segmentos, retorno: retornoPts, umArquivoPorSegmento: saida.modo === 'trechos' || saida.modo === 'blocos',
       shp, campos, licenca: licenca.texto || '' });
   const arquivos = todos.filter(a => quer[formatoDo(a.name)]);
 

@@ -121,6 +121,29 @@ await t('/cortesia: e-mail falhando não impede o download', async () => {
   assert.equal(st, 200); assert.equal(j.recibo, false); });
 await t('/cortesia de origem estranha é barrada', async () => { assert.equal((await chamaE('/cortesia', { plano: 'x', polys, camadas: ['linhas_ab'], cupom: 'AMIGO' }, Object.assign({ orig: 'https://golpe.com' }, ANA))).st, 403); });
 
+// ---------- cupom ilimitado (1SAMUEL712, BEMVINDO30, BEMVINDO90) ----------
+F.cupons.push({ codigo: 'LIVRE', gratis: true, ilimitado: true, ativo: true });
+await t('cupom ilimitado: a mesma conta usa quantas vezes quiser', async () => {
+  const um = await chamaE('/cortesia', { plano: 'L1', polys: plano.polys, camadas: ['linhas_ab'], cupom: 'LIVRE' }, ANA);
+  assert.equal(um.st, 200, JSON.stringify(um.j));
+  const dois = await chamaE('/cortesia', { plano: 'L2', polys: plano.polys, camadas: ['linhas_ab'], cupom: 'LIVRE' }, ANA);
+  assert.equal(dois.st, 200, JSON.stringify(dois.j));
+  assert.notEqual(um.j.id, dois.j.id); });
+await t('cupom ilimitado: vale no mesmo talhão e para outra pessoa', async () => {
+  const { j } = await chama('/preco', { polys: plano.polys, camadas: TODAS, cupom: 'livre' }, BETO);
+  assert.ok(j.cupom.valido, JSON.stringify(j.cupom)); assert.equal(j.cupom.gratis, true); });
+await t('cupom ilimitado vencido não vale', async () => {
+  F.cupons.push({ codigo: 'LIVREVENCIDO', gratis: true, ilimitado: true, ativo: true, validade: new Date(Date.now() - 864e5).toISOString() });
+  const { j } = await chama('/preco', { polys, camadas: TODAS, cupom: 'LIVREVENCIDO' }, ANA);
+  assert.equal(j.cupom.valido, false); assert.match(j.cupom.motivo, /venceu/); });
+await t('banco fora do ar: o preço sai e o cupom explica (não quebra tudo)', async () => {
+  const guardado = F.rpcFalha; F.rpcFalha = 'plantare_cupom_v2';
+  const { st, j } = await chama('/preco', { polys, camadas: TODAS, cupom: 'campo10' }, ANA);
+  F.rpcFalha = guardado;
+  assert.equal(st, 200, JSON.stringify(j)); assert.ok(j.preco.total > 0, 'o preço continua saindo');
+  assert.equal(j.cupom.valido, false); assert.match(j.cupom.motivo, /conferir o cupom/); });
+
+
 // ---------- Pix assíncrono, teste, referência ----------
 // ---------- compra sem conta (visitante) ----------
 let visita;
@@ -221,6 +244,19 @@ await t('percurso: bloco por tanque usa a vazão', async () => {
   const { j } = await chama('/pacote', { pedido: pedidoTudo, entrada: Object.assign({}, entradaBoa, { saida: { modo: 'blocos', criterio: 'tanque', valor: 200, vazao: 100, faixa: 30 } }) }, ANA);
   const kml=rotaDe(j), nomes=[...kml.matchAll(/<name>(Bloco[^<]*)[<][/]name>/g)].map(m=>m[1]);
   assert.ok(nomes.length >= 2); assert.match(nomes[0], / L/); });
+await t('retorno: à parte não entra no percurso', async () => {
+  const { j } = await chama('/pacote', { pedido: pedidoTudo, entrada: entradaBoa }, ANA);
+  const rota=Buffer.from(j.arquivos.find(x=>/_rota[.]kml$/.test(x.name)).b64,'base64').toString();
+  const ret=j.arquivos.find(x=>/_retorno[.]kml$/.test(x.name));
+  assert.ok(ret, 'tem arquivo de retorno'); assert.ok(!/Retorno/.test(rota), 'o percurso não leva a volta');
+  assert.match(Buffer.from(ret.b64,'base64').toString(), /<name>Retorno</); });
+await t('retorno: como mais um passo, entra no fim do percurso', async () => {
+  const { j } = await chama('/pacote', { pedido: pedidoTudo, entrada: Object.assign({}, entradaBoa, { saida: { modo: 'passos', retorno: 'passo' } }) }, ANA);
+  const rota=Buffer.from(j.arquivos.find(x=>/_rota[.]kml$/.test(x.name)).b64,'base64').toString();
+  assert.match(rota, /<name>Retorno/); assert.ok(!j.arquivos.some(x=>/_retorno[.]kml$/.test(x.name)), 'sem arquivo separado'); });
+await t('retorno: junto, fica dentro do caminho como antes', async () => {
+  const { j } = await chama('/pacote', { pedido: pedidoTudo, entrada: Object.assign({}, entradaBoa, { saida: { modo: 'unico', retorno: 'junto' } }) }, ANA);
+  assert.ok(!j.arquivos.some(x=>/_retorno[.]kml$/.test(x.name))); });
 await t('/pacote: cortesia também libera os arquivos', async () => { const { st, j } = await chama('/pacote', { pedido: cort, entrada: entradaBoa }, ANA); assert.equal(st, 200); assert.ok(j.arquivos.some(a => a.name.endsWith('_ab.kmz'))); });
 await t('/pacote: compra de outra conta → 404', async () => { assert.equal((await chama('/pacote', { pedido: pedidoArvore, entrada: entradaBoa }, BETO)).st, 404); });
 await t('/pacote: percurso fora do talhão → 400', async () => {
@@ -229,8 +265,9 @@ await t('/pacote: percurso fora do talhão → 400', async () => {
 await t('/pacote: compra antiga demais', async () => {
   const c = F.compras.find(x => x.id === pedidoArvore), antes = c.pago_em; c.pago_em = new Date(Date.now() - 400 * 864e5).toISOString();
   const { st } = await chama('/pacote', { pedido: pedidoArvore, entrada: entradaBoa }, ANA); c.pago_em = antes; assert.equal(st, 403); });
-await t('gerador: pacote completo tem os 38 arquivos do app', () => {
-  const r = gerarPacote(entradaBoa, { camadas: TODAS, texto: '' }); assert.equal(r.arquivos.length, 38); assert.deepEqual(r.negados, []); });
+await t('gerador: pacote completo tem os 40 arquivos do app (com o retorno à parte)', () => {
+  const r = gerarPacote(entradaBoa, { camadas: TODAS, texto: '' }); assert.equal(r.arquivos.length, 40); assert.deepEqual(r.negados, []);
+  assert.ok(r.arquivos.some(a => /_retorno[.]kml$/.test(a.name)) && r.arquivos.some(a => /_retorno[.]kmz$/.test(a.name))); });
 await t('gerador: entrada inválida', () => { assert.throws(() => gerarPacote(Object.assign({}, entradaBoa, { legs: [{ t: 'w', p: [[1, 'a']] }] }), { camadas: TODAS }), /inválido/); });
 await t('/eu lista as compras pagas', async () => { const { j } = await chama('/eu', null, ANA); const esperadas = F.compras.filter(c => c.user_id === 'u-ana' && c.status === 'pago').map(c => c.id); assert.ok(esperadas.includes(cort)); assert.deepEqual(j.compras.map(c => c.id).sort(), esperadas.sort()); });
 

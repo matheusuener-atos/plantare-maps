@@ -111,11 +111,18 @@ async function orcar(body, env, user) {
   let cupom = null, desc = 0;
   if (cod) {
     const email = emailDe(body, user);
-    const r = await rpc(env, 'plantare_cupom_v2', { p_codigo: cod, p_user: user ? user.id : null, p_email: EMAIL_OK(email) ? email : null,
-      p_ha: Math.round(ha * 100) / 100, p_area: await hashTalhao(body.polys) });
+    let r = null;
+    try {
+      r = await rpc(env, 'plantare_cupom_v2', { p_codigo: cod, p_user: user ? user.id : null, p_email: EMAIL_OK(email) ? email : null,
+        p_ha: Math.round(ha * 100) / 100, p_area: await hashTalhao(body.polys) });
+    } catch (e) {
+      // banco fora do ar ou função ainda não instalada: o preço continua saindo, só o cupom não vale agora
+      console.log('cupom: ' + (e && e.message));
+      return { preco: calcularPreco(ha, body.camadas, 0), cupom: { codigo: cod, valido: false, motivo: 'Não deu para conferir o cupom agora. Tente de novo em instantes.' } };
+    }
     if (r && r.ok) {
       const gratis = r.gratis === true, fixo = !gratis && +r.fixo > 0 ? +r.fixo : 0, d = !gratis && !fixo ? +r.desconto || 0 : 0;
-      cupom = { codigo: r.codigo, valido: true, desconto: d, fixo: fixo || null, gratis, validade: r.validade || null };
+      cupom = { codigo: r.codigo, valido: true, desconto: d, fixo: fixo || null, gratis, validade: r.validade || null, ilimitado: r.ilimitado === true };
       desc = gratis ? { gratis } : fixo ? { fixo } : d;
     } else cupom = { codigo: cod, valido: false, motivo: (r && r.motivo) || 'Cupom não encontrado.' };
   }
@@ -184,7 +191,7 @@ async function criarCobranca(body, env, user) {
   await sb(env, 'compras', { method: 'POST', prefer: 'return=minimal', body: {
     id: String(d.id), user_id: user ? user.id : null, email, acesso_hash: acesso ? await sha256(acesso) : null,
     plano, area_hash: area, ha: p.ha, camadas: p.camadas, valor: p.total, cupom: o.cupom ? o.cupom.codigo : null } });
-  if (o.cupom) {
+  if (o.cupom && !o.cupom.ilimitado) {
     try {
       const antiga = await rpc(env, 'plantare_reservar_cupom_v2', { p_codigo: o.cupom.codigo, p_user: user ? user.id : null, p_email: emailDe(body, user), p_compra: String(d.id) });
       if (antiga) { await mpCancelar(antiga, env); await sb(env, 'compras?id=eq.' + q(antiga) + '&status=eq.pendente', { method: 'PATCH', prefer: 'return=minimal', body: { status: 'cancelado' } }); }
@@ -217,8 +224,10 @@ async function cortesia(body, env, user) {
   await sb(env, 'compras', { method: 'POST', prefer: 'return=minimal', body: {
     id, user_id: user ? user.id : null, email, acesso_hash: acesso ? await sha256(acesso) : null,
     plano, area_hash: await hashTalhao(body.polys), ha: p.ha, camadas: p.camadas, valor: 0, cupom: o.cupom.codigo } });
-  try { await rpc(env, 'plantare_reservar_cupom_v2', { p_codigo: o.cupom.codigo, p_user: user ? user.id : null, p_email: email, p_compra: id }); }
-  catch (e) { await sb(env, 'compras?id=eq.' + q(id), { method: 'PATCH', prefer: 'return=minimal', body: { status: 'cancelado' } }); throw new Falha('Você já usou este cupom.'); }
+  if (!o.cupom.ilimitado) {
+    try { await rpc(env, 'plantare_reservar_cupom_v2', { p_codigo: o.cupom.codigo, p_user: user ? user.id : null, p_email: email, p_compra: id }); }
+    catch (e) { await sb(env, 'compras?id=eq.' + q(id), { method: 'PATCH', prefer: 'return=minimal', body: { status: 'cancelado' } }); throw new Falha('Você já usou este cupom.'); }
+  }
   await rpc(env, 'plantare_confirmar', { p_compra: id });
   const camadas = p.camadas.map(c => NOMES_CAMADAS[c]).join(', ');
   const quando = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });

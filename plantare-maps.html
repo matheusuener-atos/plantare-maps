@@ -1301,7 +1301,7 @@ dialog.gp{width:min(860px,94vw)}
   <label><input type="checkbox" data-ux-layer="manobras" checked><i style="--swatch:#E9B45A"></i>Manobras</label>
   <label><input type="checkbox" data-ux-layer="bord" checked><i style="--swatch:#5BE38A"></i>Bordadura</label>
   <label><input type="checkbox" data-ux-layer="obst" checked><i style="--swatch:#FF7A6B"></i>Obstáculos</label>
-  <label class="ux-layer-so"><input type="checkbox" data-ux-layer="percurso"><i style="--swatch:#C9A2FF"></i>Percurso (o caminho inteiro)</label>
+  <label class="ux-layer-so"><input type="checkbox" data-ux-layer="percurso"><i style="--swatch:#C9A2FF"></i>Percurso (e a volta, tracejada)</label>
 </div>
 <div class="ux-project-actions" id="uxProjectActions" hidden>
   <button type="button" id="uxEditArea"><svg viewBox="0 0 24 24"><path d="M4 18 7 6l10 2 2 9-10 2zM7 6l2 13"/></svg><span>Editar área</span></button>
@@ -3058,7 +3058,7 @@ function cruzamentosDoPercurso(legs){
     const rota=resample(tr, 2);
     for(let k=1;k<rota.length;k++){
       const a=rota[k-1], b=rota[k], id=seg.length;
-      seg.push({k:base+k,a,b});
+      seg.push({k:base+k,a,b,rota,i:k});
       const x0=Math.floor(Math.min(a[0],b[0])/CEL), x1=Math.floor(Math.max(a[0],b[0])/CEL);
       const y0=Math.floor(Math.min(a[1],b[1])/CEL), y1=Math.floor(Math.max(a[1],b[1])/CEL);
       for(let x=x0;x<=x1;x++) for(let y=y0;y<=y1;y++){ const c=x+'|'+y; let l=grade.get(c); if(!l) grade.set(c,l=[]); l.push(id); }
@@ -3072,9 +3072,15 @@ function cruzamentosDoPercurso(legs){
     const ch=Math.min(ids[p],ids[q])+'|'+Math.max(ids[p],ids[q]);
     if(vistos.has(ch)) continue; vistos.add(ch);
     const t=cruzaSeg(A.a,A.b,B.a,B.b); if(t===null) continue;
-    const u1=unit([A.b[0]-A.a[0], A.b[1]-A.a[1]]), u2=unit([B.b[0]-B.a[0], B.b[1]-B.a[1]]);
-    const sen=Math.abs(u1[0]*u2[1]-u1[1]*u2[0]);
-    if(sen<0.26) continue;                      // quase paralelo = anda por cima, não é cruzamento
+    /* Antes bastava o ângulo: abaixo de 15° o encontro era considerado "anda por cima". Só que um
+       garfo em Y — dois caminhos colados que se abrem — tem ângulo pequeno e é justamente onde o
+       piloto automático não sabe seguir. Agora olhamos 12 m antes e 12 m depois do encontro:
+         juntos dos dois lados  → anda por cima mesmo (não é garfo)
+         separados de um lado   → Y: a máquina chega e tem duas saídas
+         separados dos dois     → X de verdade */
+    const passo=6, emA=o=>A.rota[Math.max(0,Math.min(A.rota.length-1, A.i+o))], emB=o=>B.rota[Math.max(0,Math.min(B.rota.length-1, B.i+o))];
+    const lado=o=>Math.min(dist(emA(o), emB(o)), dist(emA(o), emB(-o)));
+    if(lado(-passo)<=3 && lado(passo)<=3) continue;
     const p2=[A.a[0]+(A.b[0]-A.a[0])*t, A.a[1]+(A.b[1]-A.a[1])*t];
     if(achados.some(x=>dist(x,p2)<8)) continue;  // um X por lugar
     achados.push(p2);
@@ -3669,8 +3675,44 @@ function medirTudo(c,P,legs){
   return {problemas:nucProblemas(c,P,legs), medida:nucMedir(legs,P),
     cobertura:{falha_pct:cov.falha_pct, sobrep_pct:cov.sobrep_pct, falha_ha:cov.falha_ha}};
 }
+/* Passada final contra garfos: alguns X só nascem nas últimas etapas (suavização, costura,
+   troca de manobras). Aqui o plano refaz a manobra de cada X que sobrou, até acabar o orçamento. */
+function consertarCruzamentos(c,P,legs,partida,ms){
+  const t0=Date.now(), falhas=new Set(); let n=0;
+  for(let v=0; v<24 && Date.now()-t0<(ms||9000); v++){
+    const q=nucProblemas(c,P,legs).find(x=>x.tipo==='cruzamento' && !falhas.has(assinatura(x)));
+    if(!q) break;
+    let r; try{ r=corrigirUm(c,P,legs,q,partida); }catch(e){ r={ok:false}; }
+    if(r && r.ok){ legs.length=0; legs.push(...r.legs); n++; } else falhas.add(assinatura(q));
+  }
+  return n;
+}
 function corrigirUm(c,P,legs0,pr,partida){
-  if(pr.tipo==='cruzamento') return {ok:false, motivo:'Esse X vem do espaçamento menor que o diâmetro de giro. Aumente as voltas de bordadura ou refaça a manobra à mão pela bordadura.'};
+  /* X no percurso: refaz a manobra que passa por ele, tentando os quatro tipos e vários raios.
+     Vale a primeira que desfaz o X sem criar erro novo — antes o conserto simplesmente desistia
+     e o plano saía com o garfo, que no campo desliga o piloto automático. */
+  if(pr.tipo==='cruzamento'){
+    const i=pr.leg;
+    const recado='Esse X vem do espaçamento menor que o diâmetro de giro. Aumente as voltas de bordadura ou refaça a manobra à mão pela bordadura.';
+    if(i==null || i<1 || !legs0[i] || legs0[i].t!=='m' || !legs0[i-1] || !legs0[i+1]) return {ok:false, motivo:recado};
+    const base=nucProblemas(c,P,legs0), conhecidos=new Set(base.map(assinatura));
+    const S=P.esp||P.faixa||30, R0=Math.max(1,P.rMin||1), vistos=new Set();
+    for(const tipo of ['auto','u','guarda','gota'])
+      for(const raio of [0, +(R0*1.2).toFixed(2), +(R0*1.6).toFixed(2), +(S/2).toFixed(2)]){
+        const ch=tipo+'|'+raio; if(vistos.has(ch)) continue; vistos.add(ch);
+        let r; try{ r=pecaTrocarManobra(c,P,legs0,i,{tipo, raio}); }catch(e){ continue; }
+        if(!r || !r.ok) continue;
+        const legs=legs0.map(l=>Object.assign({},l));
+        legs[i-1]=Object.assign({},legs[i-1],{p:r.A}); legs[i+1]=Object.assign({},legs[i+1],{p:r.B});
+        legs[i]=Object.assign({},legs[i],{p:r.pts, raio:r.raio, apertada:false, manual:true, peca:'manobra', estilo:r.tipo});
+        const agora=nucProblemas(c,P,legs);
+        if(agora.some(q=>q.tipo==='cruzamento' && q.ir && pr.ir && dist(q.ir,pr.ir)<10)) continue;   // o X ficou onde estava
+        if(agora.some(q=>q.grav==='erro' && !conhecidos.has(assinatura(q)))) continue;               // trocou um erro por outro
+        return {ok:true, legs, antes:[legs0[i].p], depois:[r.pts],
+          resumo:{tipo:'manobra', modo:'troca', raio:r.raio, extra:plen(r.pts)-plen(legs0[i].p), enc:0}};
+      }
+    return {ok:false, motivo:recado};
+  }
   if(pr.tipo==='volante'){
     const legs=legs0.map(l=>Object.assign({},l));
     const antesT=tempoDeVolante(legs[pr.leg].p,P);
@@ -5371,6 +5413,7 @@ function pl4Plano(c, d){
       otim.manobras={tipo:P.tipoManobra, feitas:g.ok?g.feitas:0, total:g.total||0, motivo:g.ok?null:(g.motivo||null)};
     }catch(e){ otim.manobras={tipo:P.tipoManobra, feitas:0, total:0, motivo:'não deu para trocar as manobras'}; }
   }
+  { const n=consertarCruzamentos(c, P, legs, pl.partida); if(n) otim.xRefeitos=n; }
   cov=pl4Cobertura(c, legs, P.faixa);
   return {legs, rumo:pl.rumo, partida:pl.partida, anel:pl.anel?pl.anel.pts:null,
     pend:pl.pendencias.map(p=>({t:p.t, m:p.m, ir:p.ir||null})), problemas:nucProblemas(c,P,legs), otimizados:otim,
@@ -5987,6 +6030,7 @@ const TAREFAS={
     }
     if(d.fim==='ultima'){ const iR=legs.findIndex(l=>l.tipo==='retorno'); if(iR>=0) legs.splice(iR,1); }
     else if(d.retorno!=='bordadura'){ const vr=planejarRetorno(c, d.P, legs, pl.partida, d.apoio); if(vr) otim.retorno=vr; }
+    { const n=consertarCruzamentos(c, d.P, legs, pl.partida); if(n) otim.xRefeitos=n; }
     const cov=pl4Cobertura(c, legs, d.P.faixa);
     return {legs, rumo:pl.rumo, partida:pl.partida, anel:pl.anel?pl.anel.pts:null,
       pend:pl.pendencias.filter(p=>!viraProblema.test(p.m)).map(p=>({t:p.t, m:p.m, ir:p.ir||null})),
@@ -6863,7 +6907,7 @@ function iniciarMapa(){
     map.addLayer({id:'luzes', type:'raster', source:'luzes', layout:{visibility:'visible'}, paint:{'raster-opacity':0, 'raster-fade-duration':180}});
     map.on('sourcedata', e=>{ if(e.sourceId==='luzes') MAPA.luzesOk=map.isSourceLoaded('luzes'); });
     const add=(id)=>map.addSource(id,{type:'geojson', data:VAZIO});
-    ['cerca','cercaParcial','obst','anel','previa','lateral','cob','cobParcial','rastro','rastroParcial','bord','linhas','manobras','percurso','cabeca','barra','avisos','problema','proposta','probPonto'].forEach(add);
+    ['cerca','cercaParcial','obst','anel','previa','lateral','cob','cobParcial','rastro','rastroParcial','bord','linhas','manobras','percurso','retorno','cabeca','barra','avisos','problema','proposta','probPonto'].forEach(add);
     const L=(o)=>map.addLayer(o);
     map.addSource('grade',{type:'geojson', data:VAZIO});
     L({id:'grade-menor',type:'line',source:'grade',filter:['==',['get','maior'],false],layout:{visibility:'none'},paint:{'line-color':'#FFFFFF','line-opacity':.07,'line-width':1}});
@@ -6880,6 +6924,8 @@ function iniciarMapa(){
     L({id:'previa',type:'line',source:'previa',paint:{'line-color':COR.linha,'line-width':1.3,'line-opacity':.8,'line-dasharray':[3,2]}});
     L({id:'lateral',type:'line',source:'lateral',layout:{'line-cap':'round'},paint:{'line-color':COR.lateral,'line-width':6,'line-opacity':.9}});
     L({id:'manobras',type:'line',source:'manobras',layout:{'line-join':'round'},paint:{'line-color':COR.manobra,'line-width':1.8,'line-opacity':['case',['==',['get','tipo'],'retorno'],.6,.9]}});
+    L({id:'retorno',type:'line',source:'retorno',layout:{'line-join':'round','line-cap':'round',visibility:'none'},
+      paint:{'line-color':COR.manobra,'line-width':2.2,'line-opacity':.9,'line-dasharray':[3,2]}});
     L({id:'percurso',type:'line',source:'percurso',layout:{'line-join':'round','line-cap':'round',visibility:'none'},
       paint:{'line-width':2.6,'line-opacity':.95,
         'line-color':['match',['get','i'],0,'#C9A2FF',1,'#8CF0AE',2,'#FFE58A',3,'#7FD4FF',4,'#FF9AA2','#C9A2FF']}});
@@ -7140,7 +7186,7 @@ function paramsIniciais(){ let p=null; try{ p=JSON.parse(GUARDA.ler(PREF_CHAVE)|
    O motor já sabia fazer tudo isto — o que faltava era a pessoa escolher, em vez de o código decidir. */
 const PERC_CHAVE='pulv.percurso.v1';
 const PERC_PADRAO={manobra:'auto', sobreAplicado:true, obst:'volta', obstLim:2.2, conflito:'equilibrio', retorno:'curto', bordNoPercurso:false,
-  saida:'unico', blocoCriterio:'area', blocoValor:0};
+  saida:'unico', blocoCriterio:'area', blocoValor:0, retornoSaida:'arquivo'};
 function percLimpa(o){
   o=o||{}; const lim=+o.obstLim;
   return {manobra:['auto','u','gota','guarda'].includes(o.manobra)?o.manobra:'auto',
@@ -7152,7 +7198,8 @@ function percLimpa(o){
     bordNoPercurso:o.bordNoPercurso===true,
     saida:['unico','passos','trechos','blocos'].includes(o.saida)?o.saida:'unico',
     blocoCriterio:['tanque','area','passadas','tempo'].includes(o.blocoCriterio)?o.blocoCriterio:'area',
-    blocoValor:Math.max(0, +o.blocoValor||0)};
+    blocoValor:Math.max(0, +o.blocoValor||0),
+    retornoSaida:['arquivo','passo','junto'].includes(o.retornoSaida)?o.retornoSaida:'arquivo'};
 }
 function percPadrao(){ let p=null; try{ p=JSON.parse(GUARDA.ler(PERC_CHAVE)||'null'); }catch(e){ p=null; } return percLimpa(p); }
 function percGuardarPadrao(){ try{ GUARDA.gravar(PERC_CHAVE, JSON.stringify(percLimpa(E.pref))); return true; }catch(e){ return false; } }
@@ -8199,6 +8246,16 @@ const PREF_ARTE=(()=>{
       +'<rect x="12" y="14" width="22" height="32" fill="rgba(45,192,251,.35)"/><rect x="37" y="14" width="22" height="32" fill="rgba(140,240,174,.35)"/>'
       +'<rect x="62" y="14" width="22" height="32" fill="rgba(255,229,138,.35)"/>'
       +'<path d="M35.5 12v36M60.5 12v36" stroke="'+L+'" stroke-width="1.4" stroke-dasharray="3 3" opacity=".8"/>'),
+    // a volta ao ponto inicial: arquivo próprio, mais um passo, ou dentro do percurso
+    retArquivo: svg('<rect x="6" y="12" width="26" height="36" rx="3" stroke="#5BE38A" stroke-width="2" opacity=".9"/><path d="M12 22h14M12 30h14" stroke="#5BE38A" stroke-width="1.6" opacity=".5"/>'
+      +'<rect x="35" y="12" width="26" height="36" rx="3" stroke="'+L+'" stroke-width="2" opacity=".9"/><path d="M41 22h14M41 30h14M41 38h14" stroke="#2dc0fb" stroke-width="1.6"/>'
+      +'<rect x="64" y="12" width="26" height="36" rx="3" stroke="#E9B45A" stroke-width="2" opacity=".9"/><path d="M70 30h14" stroke="#E9B45A" stroke-width="2" stroke-dasharray="4 3"/>'),
+    retPasso: svg('<rect x="26" y="8" width="44" height="44" rx="3" stroke="'+L+'" stroke-width="2" opacity=".85"/>'
+      +'<path d="M34 18h28" stroke="#2dc0fb" stroke-width="2.2"/><path d="M34 27h28" stroke="#8CF0AE" stroke-width="2.2"/><path d="M34 36h28" stroke="#FFE58A" stroke-width="2.2"/>'
+      +'<path d="M34 45h28" stroke="#E9B45A" stroke-width="2.2" stroke-dasharray="4 3"/>'),
+    retJunto: svg('<rect x="26" y="8" width="44" height="44" rx="3" stroke="'+L+'" stroke-width="2" opacity=".85"/>'
+      +'<path d="M34 18h28M34 27h28M34 36h28M34 45h20" stroke="#2dc0fb" stroke-width="2.2"/>'
+      +'<path d="M54 45h8" stroke="#E9B45A" stroke-width="2.2" stroke-dasharray="4 3"/>'),
     // bordadura no mesmo caminho do percurso, ou em arquivo/camada à parte
     bordFora: svg('<rect x="8" y="10" width="36" height="40" rx="3" stroke="#5BE38A" stroke-width="2.2" opacity=".9"/>'
       +'<path d="M16 20h20M16 28h20M16 36h20" stroke="#5BE38A" stroke-width="1.6" opacity=".35"/>'
@@ -8220,7 +8277,8 @@ const PREF_ARTE=(()=>{
 function percursoSegmentos(){
   if(!E.plano) return [];
   const p=percLimpa(E.pref), P=E.P, faixa=P.faixa||30, vazao=+P.vazao||0;
-  const uteis=(E.plano.legs||[]).filter(l=>l.t!=='x' && l.p && l.p.length>1 && (p.bordNoPercurso || l.tipo!=='bordadura'));
+  const uteis=(E.plano.legs||[]).filter(l=>l.t!=='x' && l.p && l.p.length>1 && (p.bordNoPercurso || l.tipo!=='bordadura')
+    && (p.retornoSaida==='junto' || l.tipo!=='retorno'));   // a volta sai à parte, ou como último passo
   if(!uteis.length) return [];
   const comp=l=>{ let c=0; for(let i=1;i<l.p.length;i++) c+=dist(l.p[i-1],l.p[i]); return c; };
   const ha=l=>l.t==='w'?comp(l)*faixa/1e4:0;
@@ -8229,11 +8287,14 @@ function percursoSegmentos(){
   const medir=ls=>{ let a=0,h=0,n=0; for(const l of ls){ a+=ha(l); h+=horas(l); if(l.tipo==='interior') n++; }
     return {ha:+a.toFixed(2), horas:+h.toFixed(3), passadas:n, litros:vazao>0?Math.round(a*vazao):0}; };
   const feito=gs=>gs.filter(g=>g.length).map((g,i)=>Object.assign({n:i+1, pts:juntar(g)}, medir(g))).filter(x=>x.pts.length>1);
-  if(p.saida==='unico') return feito([uteis]).map(x=>Object.assign(x,{nome:'Percurso'}));
+  const volta=p.retornoSaida==='passo' ? (E.plano.legs||[]).filter(l=>l.tipo==='retorno' && l.p && l.p.length>1) : [];
+  const comVolta=segs=>{ if(!volta.length) return segs;
+    const g=Object.assign({n:segs.length+1, pts:juntar(volta), nome:'Retorno'}, medir(volta)); return segs.concat([g]); };
+  if(p.saida==='unico') return comVolta(feito([uteis]).map(x=>Object.assign(x,{nome:'Percurso'})));
   const pedacos=[]; let atual=null, ult=null;
   for(const l of uteis){ if(!atual || (ult && dist(ult,l.p[0])>1.5)){ atual=[]; pedacos.push(atual); } atual.push(l); ult=l.p[l.p.length-1]; }
   const comoPasso=gs=>feito(gs).map(x=>Object.assign(x,{nome:'Passo '+String(x.n).padStart(2,'0')}));
-  if(p.saida!=='blocos' || !(p.blocoValor>0)) return comoPasso(pedacos);
+  if(p.saida!=='blocos' || !(p.blocoValor>0)) return comVolta(comoPasso(pedacos));
   const quanto=(acc,l)=>p.blocoCriterio==='tempo'?acc+horas(l)
     :p.blocoCriterio==='passadas'?acc+(l.tipo==='interior'?1:0)
     :p.blocoCriterio==='tanque'?acc+ha(l)*vazao : acc+ha(l);
@@ -8243,7 +8304,7 @@ function percursoSegmentos(){
     bloco.push(l); acc=quanto(acc,l); if(l.t==='w') temTrab=true;
   }
   if(bloco.length) blocos.push(bloco);
-  return feito(blocos).map(x=>Object.assign(x,{nome:'Bloco '+String(x.n).padStart(2,'0')}));
+  return comVolta(feito(blocos).map(x=>Object.assign(x,{nome:'Bloco '+String(x.n).padStart(2,'0')})));
 }
 /* etapa 03: as decisões que antes o código tomava sozinho */
 function prefGrupo(titulo, campo, valor, ops, nota){
@@ -8321,6 +8382,11 @@ function telaPrefs(){
     {v:'0', a:'bordFora', t:'Não: bordadura à parte', d:'O percurso sai só com as linhas e as manobras. A bordadura fica na camada (ou no arquivo) dela.'},
     {v:'1', a:'bordDentro', t:'Sim: tudo num caminho só', d:'A bordadura entra no começo do percurso, como a máquina vai andar de ponta a ponta.'}],
     'A maioria dos monitores lê a bordadura primeiro e o percurso depois, cada um no seu arquivo. Esta escolha vale para o mapa e para os arquivos exportados.');
+  if(E.fim!=='ultima') h+=prefGrupo('Como entregar a volta ao ponto inicial','retornoSaida',p.retornoSaida,[
+    {v:'arquivo', a:'retArquivo', t:'Arquivo (e camada) só dela', d:'Três leituras no monitor: bordadura, percurso e volta. A volta anda por cima do aplicado, então junto ela cruzaria o percurso.'},
+    {v:'passo', a:'retPasso', t:'Mais um passo no fim', d:'Entra no mesmo arquivo como o último item, depois dos passos de trabalho.'},
+    {v:'junto', a:'retJunto', t:'Dentro do percurso', d:'Tudo num caminho só. Pode fazer o percurso cruzar a si mesmo onde a volta encosta nele.'}],
+    'A volta passa onde a máquina já pisou. Separando, o percurso de trabalho fica sem cruzamento.');
   if(E.fim!=='ultima') h+=prefGrupo('Volta ao ponto inicial','retorno',p.retorno,[
     {v:'curto', a:'retCurto', t:'Pelo caminho mais curto', d:'Pode andar por cima de linha já aplicada até o lado de apoio.'},
     {v:'bordadura', a:'retBord', t:'Sempre pela bordadura', d:'Mais rodado, porém a volta nunca encosta nas manobras nem cria bifurcação.'}]);
@@ -12216,7 +12282,8 @@ function entradaServidor(nome, perfil){
   const fm={}; for(const k of FORMATOS_PAGOS) fm[k]=!!E.sel[k];
   const pp=percLimpa(E.pref);
   return {nome, crs:{zone:E.crs.zone, south:!!E.crs.south, kind:E.crs.kind}, polys:E.polysLL, bordNoPercurso:pp.bordNoPercurso,
-    saida:{modo:pp.saida, criterio:pp.blocoCriterio, valor:pp.blocoValor, faixa:E.P.faixa, vazao:+E.P.vazao||0, vTrab:E.P.vTrab, vMan:E.P.vMan},
+    saida:{modo:pp.saida, criterio:pp.blocoCriterio, valor:pp.blocoValor, retorno:pp.retornoSaida,
+      faixa:E.P.faixa, vazao:+E.P.vazao||0, vTrab:E.P.vTrab, vMan:E.P.vMan},
     legs:E.plano.legs.map(l=>({t:l.t, tipo:l.tipo, num:l.num||0, p:l.p})), obstaculos:(E.campo&&E.campo.obst)||[], formatos:fm,
     shp:{camadas:Object.assign({},E.shpCamadas), partes:Object.assign({},E.shpPartes), sistemas:Object.assign({},E.shpSistemas)},
     campos:perfil?perfil.campos||null:null};
@@ -12264,7 +12331,7 @@ async function montarSelecionados(){
 "use strict";
 /* Controles da interface. Sem alterar geometria, propostas ou estados de aprovação. */
 const UX_MAPA={focus:false,layerOpen:false,layers:{linhas:true,manobras:true,bord:true,obst:true,percurso:false},pendingFrame:0,viewBound:false};
-const UX_LAYERS={linhas:['linhas','linhas-brilho'],manobras:['manobras'],bord:['bord'],obst:['obst-f','obst-l'],percurso:['percurso']};
+const UX_LAYERS={linhas:['linhas','linhas-brilho'],manobras:['manobras'],bord:['bord'],obst:['obst-f','obst-l'],percurso:['percurso','retorno']};
 function uxAplicarCamadas(){
   if(!MAPA.pronto) return;
   if(typeof percursoFonte==='function') percursoFonte();   // o caminho inteiro acompanha o plano atual
@@ -12284,9 +12351,11 @@ function uxSincCamadas(){
    máquina, chegando ali, não saberia qual seguir. */
 function percursoFonte(){
   if(!MAPA.pronto || !MAPA.map.getSource('percurso')) return;
-  if(!UX_MAPA.layers.percurso || !E.plano){ fonte('percurso'); return; }
+  if(!UX_MAPA.layers.percurso || !E.plano){ fonte('percurso'); fonte('retorno'); return; }
   const segs=percursoSegmentos();
   fonte('percurso', colecao(segs.map(g=>feicao(g.pts,{i:(g.n-1)%5, nome:g.nome}))));
+  const rets=percLimpa(E.pref).retornoSaida==='junto' ? [] : (E.plano.legs||[]).filter(l=>l.tipo==='retorno' && l.p && l.p.length>1);
+  fonte('retorno', colecao(rets.map((l,i)=>feicao(l.p,{i}))));
 }
 function uxFecharCamadas(){UX_MAPA.layerOpen=false;$('#uxLayersPanel').hidden=true;$('#uxLayers').setAttribute('aria-expanded','false');}
 function uxFoco(liga){

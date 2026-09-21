@@ -29,13 +29,17 @@ export function instalarFalsos(base) {
       if (!c || !c.ativo) return { ok: false, motivo: 'Cupom não encontrado.' };
       if (c.validade && Date.parse(c.validade) < Date.now()) return { ok: false, motivo: 'Este cupom venceu.' };
       if (c.area_min != null && p_ha < c.area_min) return { ok: false, motivo: 'Este cupom vale a partir de ' + c.area_min + ' ha.' };
-      if (E.usos.some(u => u.cupom === c.codigo && u.pago && mesma(u))) return { ok: false, motivo: 'Você já usou este cupom.' };
-      if (p_area && E.usos.some(u => u.cupom === c.codigo && u.pago && (E.compras.find(k => k.id === u.compra_id) || {}).area_hash === p_area)) return { ok: false, motivo: 'Este cupom já foi usado neste talhão.' };
-      if (c.so_primeira && E.compras.some(x => x.status === 'pago' && ((p_user && x.user_id === p_user) || (em && String(x.email).toLowerCase() === em)))) return { ok: false, motivo: 'Este cupom é só para a primeira compra.' };
-      if (c.usos_max != null && E.usos.filter(u => u.cupom === c.codigo && u.pago && !mesma(u)).length >= c.usos_max) return { ok: false, motivo: 'Os usos deste cupom acabaram.' };
-      return { ok: true, codigo: c.codigo, desconto: c.desconto ?? null, fixo: c.fixo ?? null, gratis: !!c.gratis, validade: c.validade ?? null };
+      if (!c.ilimitado) {   // cupom ilimitado não conta uso nenhum
+        if (E.usos.some(u => u.cupom === c.codigo && u.pago && mesma(u))) return { ok: false, motivo: 'Você já usou este cupom.' };
+        if (p_area && E.usos.some(u => u.cupom === c.codigo && u.pago && (E.compras.find(k => k.id === u.compra_id) || {}).area_hash === p_area)) return { ok: false, motivo: 'Este cupom já foi usado neste talhão.' };
+        if (c.so_primeira && E.compras.some(x => x.status === 'pago' && ((p_user && x.user_id === p_user) || (em && String(x.email).toLowerCase() === em)))) return { ok: false, motivo: 'Este cupom é só para a primeira compra.' };
+        if (c.usos_max != null && E.usos.filter(u => u.cupom === c.codigo && u.pago && !mesma(u)).length >= c.usos_max) return { ok: false, motivo: 'Os usos deste cupom acabaram.' };
+      }
+      return { ok: true, codigo: c.codigo, desconto: c.desconto ?? null, fixo: c.fixo ?? null, gratis: !!c.gratis, validade: c.validade ?? null, ilimitado: !!c.ilimitado };
     },
     plantare_reservar_cupom_v2({ p_codigo, p_user, p_email, p_compra }) {
+      const c0 = E.cupons.find(x => x.codigo === String(p_codigo).trim().toUpperCase());
+      if (c0 && c0.ilimitado) return null;   // ilimitado: nada a reservar
       const em = p_email ? String(p_email).trim().toLowerCase() : null;
       if (!p_user && !em) throw Object.assign(new Error('sem dono'), { st: 400 });
       const u = E.usos.find(x => x.cupom === p_codigo && (p_user ? x.user_id === p_user : (!x.user_id && x.email === em)));
@@ -78,7 +82,10 @@ export function instalarFalsos(base) {
     m = url.match(/^https:\/\/banco\.teste\/rest\/v1\/([\w]+)(?:\/([\w]+))?(?:\?(.*))?$/);
     if (m) {
       if (op.headers.apikey !== 'sb_secret_falsa') return resp({ message: 'sem permissão' }, 401);
-      if (m[1] === 'rpc') { try { return resp(rpc[m[2]](corpo)); } catch (e) { return resp({ message: e.message }, e.st || 400); } }
+      if (m[1] === 'rpc') {
+        // E.rpcFalha simula o banco fora do ar (ou a função ainda não instalada)
+        if (E.rpcFalha === m[2]) return resp({ message: 'Could not find the function public.' + m[2] }, 404);
+        try { return resp(rpc[m[2]](corpo)); } catch (e) { return resp({ message: e.message }, e.st || 400); } }
       const tab = { compras: E.compras, cupons: E.cupons, cupom_usos: E.usos, perfis: E.perfis, talhoes: E.talhoes }[m[1]], f = filtros(m[3] || '');
       if (metodo === 'DELETE') { for (let i = tab.length - 1; i >= 0; i--) if (casa(tab[i], f)) tab.splice(i, 1); return resp(null, 204); }
       if (metodo === 'GET') return resp(tab.filter(r => casa(r, f)).sort((a, b) => String(b.pago_em).localeCompare(String(a.pago_em))));
