@@ -5120,14 +5120,33 @@ function pl4Planejar(c, P, abast, u, op){
       for(let x=x0;x<=x1;x++) for(let y=y0;y<=y1;y++){ const l=XGRADE.get(x+'|'+y); if(!l) continue;
         for(const sg of l){ if(sg.ref===i || sg.ref===i+1) continue; if(cruzaSeg(a,b,sg.a,sg.b)!=null) return true; } } }
     return false; };
-  const PENA_X=1e7;
-  for(let i=0;i+1<ordem.length;i++){
+  /* A manobra tem de virar DENTRO da bordadura, não em cima da linha dela: andar por cima
+     repassa o rastro da bordadura e, no monitor, o caminho da bordadura e o do percurso ficam
+     sobrepostos. Quem anda mais de 8 m colado nela leva um custo alto e só é usado sem alternativa. */
+  const BCEL=4, BGRADE=new Map();
+  for(const anel of (D.bord||[])){ const pts=(anel&&anel.pts)||null; if(!pts) continue;
+    for(let i=1;i<pts.length;i++){ const a=pts[i-1], b=pts[i], d=dist(a,b), n=Math.max(1,Math.ceil(d));
+      for(let k=0;k<=n;k++){ const x=a[0]+(b[0]-a[0])*k/n, y=a[1]+(b[1]-a[1])*k/n;
+        const ch=Math.floor(x/BCEL)+'|'+Math.floor(y/BCEL); let l=BGRADE.get(ch); if(!l) BGRADE.set(ch,l=[]); l.push([x,y]); } } }
+  const sobreBordadura=pts=>{
+    if(!pts || pts.length<2 || !BGRADE.size) return 0;
+    let colado=0;
+    for(let i=1;i<pts.length;i++){ const a=pts[i-1], b=pts[i], d=dist(a,b), n=Math.max(1,Math.ceil(d));
+      for(let k=0;k<n;k++){ const x=a[0]+(b[0]-a[0])*k/n, y=a[1]+(b[1]-a[1])*k/n;
+        const i0=Math.floor(x/BCEL), j0=Math.floor(y/BCEL); let achou=false;
+        for(let ii=i0-1;ii<=i0+1 && !achou;ii++) for(let jj=j0-1;jj<=j0+1 && !achou;jj++){ const l=BGRADE.get(ii+'|'+jj); if(!l) continue;
+          for(const q of l) if(Math.hypot(q[0]-x, q[1]-y)<2.5){ achou=true; break; } }
+        if(achou) colado+=d/n; } }
+    return colado; };
+  const PENA_X=1e7, PENA_BORD=4e5;
+    for(let i=0;i+1<ordem.length;i++){
     const A=ordem[i], B=ordem[i+1], TA=pl4Pts(A.s,A.inv), TB=pl4Pts(B.s,B.inv), mesma=A.cel===B.cel;
     let melhor=null;
     const tentar=(la,lb,lim)=>{ const fa=pl4Saida(D,A.s,A.inv,la), fb=pl4Entrada(D,B.s,B.inv,lb), r=pl4Ligacao(D,fa,fb,lim);
       // curvas que se encontram sem trecho de anel entre elas podem fazer quina: aí vale a ligação curta
       if(r.ok && r.Lr<3 && raioMinimo(r.pts).r<Q.R*0.92) return;
-      if(r.ok){ Object.assign(r,{fa,fb}); r.custo=r.comp+PL4_PERDA*((fa.L-fa.sigma)+(fb.L-fb.sigma))+(cruzaOFeito(r.pts,i)?PENA_X:0);
+      if(r.ok){ Object.assign(r,{fa,fb}); r.custo=r.comp+PL4_PERDA*((fa.L-fa.sigma)+(fb.L-fb.sigma))
+        +(cruzaOFeito(r.pts,i)?PENA_X:0)+(sobreBordadura(r.pts)>8?PENA_BORD:0);
         if(!melhor||r.custo<melhor.custo) melhor=r; } };
     if(mesma) tentar(pl4LadoPara(TA,TB[0]), pl4LadoPara(pl4Pts(B.s,!B.inv),TA[TA.length-1]), 4*Q.S+80);
     if(!melhor) for(const la of [1,-1]) for(const lb of [1,-1]) tentar(la,lb, mesma?6*Q.S+120:null);
@@ -5137,6 +5156,7 @@ function pl4Planejar(c, P, abast, u, op){
     if(!melhor || melhor.custo>pl4CustoDireto(Q,dAB)){
       const r=curta(A.s,A.inv,B.s,B.inv);
       if(r && r.pts && cruzaOFeito(r.pts,i)) r.custo=(r.custo||0)+PENA_X;
+      if(r && r.pts && sobreBordadura(r.pts)>8) r.custo=(r.custo||0)+PENA_BORD;
       if(r && (!melhor || r.custo+120<melhor.custo)) melhor=r;
       else if(!melhor){
         // último recurso antes de sair do rastro: pela bordadura, mesmo que mais longe
@@ -5145,6 +5165,7 @@ function pl4Planejar(c, P, abast, u, op){
       // volta enorme pela bordadura (ou nenhuma): uma curva curta por cima da bordadura, sem invadir, é melhor
       if(!melhor || melhor.custo>4*dAB+800){ const r2=pl4LigCurta(c,P,D,A.s,A.inv,B.s,B.inv,livre,true);
         if(r2 && r2.pts && cruzaOFeito(r2.pts,i)) r2.custo=(r2.custo||0)+PENA_X;
+        if(r2 && r2.pts && sobreBordadura(r2.pts)>8) r2.custo=(r2.custo||0)+PENA_BORD;
         if(r2 && (!melhor || r2.custo<melhor.custo)) melhor=r2; }
       if(!melhor){
         const r=ligarPoses(c,P,poseFim(TA),poseIni(TB),null,livre);
