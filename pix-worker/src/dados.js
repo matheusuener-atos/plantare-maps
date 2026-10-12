@@ -60,6 +60,12 @@ export function dados(env) {
       return { id: r.id, email: String(r.email).toLowerCase(), nome: r.nome || '' };
     },
     async sessaoFim(token) { await rodar('delete from sessoes where hash = ?', await sha256(token)); },
+    /* a Atos avisou que a pessoa perdeu o acesso: encerra todas as sessões dela (pelo sub; sem sub, pelo e-mail) */
+    async sessoesFimDaAtos({ sub, email }) {
+      const r = sub ? await rodar('delete from sessoes where conta_id in (select id from contas where atos_sub = ?)', String(sub))
+        : await rodar('delete from sessoes where conta_id in (select id from contas where lower(email) = ?)', String(email || '').trim().toLowerCase());
+      return (r && r.meta && r.meta.changes) || 0;
+    },
 
     /* ---------- compras ---------- */
     async compraNova(c) {

@@ -15,6 +15,10 @@ Relatório PDF, imagem PNG e projeto JSON continuam grátis e saem do próprio n
 3. O Worker confere `state` e `iss`, troca o código no `/oauth/token` (com o segredo do acesso) e confere o `id_token` (ES256 pela JWKS, `aud`, `exp`, `nonce`). Exige e-mail confirmado na Atos.
 4. Acha a conta pelo `sub` da Atos ou cria uma; se o e-mail ou o nome mudaram na Atos, acompanha.
 5. Abre uma sessão: um token aleatório de 30 dias (o banco guarda só o SHA-256). O app manda `Authorization: Bearer <token>` em tudo da conta. Vencido, entra-se de novo; `/conta/sair` e "Excluir conta" apagam a sessão na hora.
+6. Se a pessoa tira a permissão do Plantare na Atos (Minha conta › Aplicativos com acesso) ou sai da lista de liberados, a Atos avisa em `POST /atos/avisos` e as sessões dela acabam na hora, em todos os aparelhos. A conta e o que ela tem ficam; ao entrar de novo, a Atos pede a permissão outra vez.
+
+### Avisos da Atos (uma vez)
+Em atos.dev.br › Workspace › Integrações › Plantare Maps › **Avisos ao seu sistema**: endereço `https://pix.plantaremaps.com.br/atos/avisos`, **Cadastrar e gerar o segredo**, e o segredo (que a Atos mostra uma vez só) vai no Worker com `npx wrangler secret put ATOS_AVISOS_SEGREDO`. **Mandar um aviso de teste** deve aparecer como entregue. Sem o segredo, a rota responde 503 e a Atos tenta de novo mais tarde.
 
 ## Publicar (uma vez)
 
@@ -27,6 +31,7 @@ npx wrangler r2 bucket create plantare-projetos    # precisa do R2 ligado no pai
 npx wrangler secret put MP_ACCESS_TOKEN            # Access Token de produção do Mercado Pago
 npx wrangler secret put MP_WEBHOOK_SECRET          # assinatura secreta da tela de Webhooks
 npx wrangler secret put ATOS_CLIENT_SECRET         # o segredo do acesso na Atos
+npx wrangler secret put ATOS_AVISOS_SEGREDO        # o segredo dos avisos da Atos (veja acima)
 npx wrangler secret put AVISO_EMAIL                # (opcional) recebe a cópia de cada cortesia
 npx wrangler deploy
 ```
@@ -67,9 +72,9 @@ npx wrangler d1 execute plantare --remote --command "select codigo, desconto, fi
 | Onde os dados ficam | `src/dados.js` (e `migrations/` para o esquema do D1) |
 
 ## Rotas
-`/preco` (orçamento), `/eu` (compras pagas da conta), `/cobranca` (Pix), `/cortesia`, `/status/:id`, `/pacote` (arquivos pagos), `/webhook`, `/saude`;
+`/preco` (orçamento), `/eu` (compras pagas da conta), `/cobranca` (Pix), `/cortesia`, `/status/:id`, `/pacote` (arquivos pagos), `/webhook` (Mercado Pago), `/atos/avisos` (Atos), `/saude`;
 da conta: `/conta/atos/ida` e `/conta/atos/volta` (login), `/conta/sair`, `/conta/perfil`, `/conta/talhoes`, `/conta/talhoes/:chave`, `/conta/projetos/:chave`, `/conta/excluir`.
 As da conta e `/eu` pedem `Authorization: Bearer <token da sessão>`; Pix, status e pacote aceitam a conta ou a chave de acesso de quem comprou sem conta.
 
 ## Testes
-`npm test` roda 103 casos contra um Mercado Pago e uma Atos falsos e um D1 de verdade em SQLite (o `node:sqlite` do Node 24, com a mesma migração que vai ao ar) e um R2 em memória: tabela de preços, cupons (por conta, por e-mail, por talhão, ilimitado, banco fora do ar), cortesia, Pix assíncrono, webhook, a entrega dos arquivos (só as camadas pagas, carimbadas, do talhão certo), cadastro, talhões e projetos da conta (cada conta só vê o seu), sair e sessão vencida, excluir a conta e o "Entrar com Atos" (PKCE, `state` e código usados de novo, `id_token` assinado por outra chave, e-mail não confirmado, `access_denied`, e-mail trocado na Atos, segredo do acesso confidencial).
+`npm test` roda 107 casos contra um Mercado Pago e uma Atos falsos e um D1 de verdade em SQLite (o `node:sqlite` do Node 24, com a mesma migração que vai ao ar) e um R2 em memória: tabela de preços, cupons (por conta, por e-mail, por talhão, ilimitado, banco fora do ar), cortesia, Pix assíncrono, webhook, a entrega dos arquivos (só as camadas pagas, carimbadas, do talhão certo), cadastro, talhões e projetos da conta (cada conta só vê o seu), sair e sessão vencida, excluir a conta e o "Entrar com Atos" (PKCE, `state` e código usados de novo, `id_token` assinado por outra chave, e-mail não confirmado, `access_denied`, e-mail trocado na Atos, segredo do acesso confidencial) e os avisos da Atos (assinatura, aviso velho, acesso tirado e lista de liberados encerrando só as sessões da pessoa).

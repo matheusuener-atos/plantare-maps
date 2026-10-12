@@ -392,6 +392,36 @@ await t('Atos: excluir a conta e entrar de novo abre uma conta nova, vazia', asy
   const tok = (await entrarAtos({ sub: 'atos-caio', email: 'caio.novo@sitio.com' })).volta.j.access_token;
   assert.equal((await chama('/conta/excluir', { confirmar: 'EXCLUIR' }, { token: tok })).st, 200); assert.equal(contaDoSub('atos-caio'), undefined);
   const { volta } = await entrarAtos({ sub: 'atos-caio', email: 'caio.novo@sitio.com' }); assert.equal(volta.st, 200); assert.notEqual(contaDoSub('atos-caio').id, caio.id); });
+// ---------- avisos da Atos (acesso tirado) ----------
+const envAv = Object.assign({}, env, { ATOS_AVISOS_SEGREDO: 'segredo-dos-avisos' });
+const avisoAtos = async (obj, o) => { o = o || {};
+  const corpo = JSON.stringify(Object.assign({ id: 'av-' + Math.random().toString(36).slice(2), criado: new Date().toISOString(), app: 'u-plantare' }, obj));
+  const t = o.t || Math.floor(Date.now() / 1000);
+  const k = await crypto.subtle.importKey('raw', new TextEncoder().encode(o.segredo || 'segredo-dos-avisos'), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const v1 = [...new Uint8Array(await crypto.subtle.sign('HMAC', k, new TextEncoder().encode(t + '.' + corpo)))].map(b => b.toString(16).padStart(2, '0')).join('');
+  const r = await worker.fetch(new Request('https://pix.plantaremaps.com.br/atos/avisos', { method: 'POST', headers: { 'content-type': 'application/json', 'atos-assinatura': 't=' + t + ',v1=' + v1 },
+    body: o.mexer ? corpo.replace('"', ' "') : corpo }), o.env || envAv);
+  return r.status; };
+await t('avisos da Atos: sem ATOS_AVISOS_SEGREDO respondem 503', async () => { assert.equal(await avisoAtos({ tipo: 'aviso.teste', dados: {} }, { env }), 503); });
+await t('avisos da Atos: assinatura errada, corpo mexido ou aviso velho → 401', async () => {
+  assert.equal(await avisoAtos({ tipo: 'aviso.teste', dados: {} }, { segredo: 'outro' }), 401);
+  assert.equal(await avisoAtos({ tipo: 'aviso.teste', dados: {} }, { mexer: true }), 401);
+  assert.equal(await avisoAtos({ tipo: 'aviso.teste', dados: {} }, { t: Math.floor(Date.now() / 1000) - 400 }), 401);
+  assert.equal(await avisoAtos({ tipo: 'aviso.teste', dados: {} }), 200); });
+await t('avisos da Atos: acesso tirado encerra as sessões da pessoa, só dela', async () => {
+  const um = (await entrarAtos({ sub: 'atos-gil', email: 'gil@sitio.com' })).volta.j.access_token;
+  const dois = (await entrarAtos({ sub: 'atos-gil', email: 'gil@sitio.com' })).volta.j.access_token;   // outro aparelho
+  const outra = (await entrarAtos({ sub: 'atos-hana', email: 'hana@sitio.com' })).volta.j.access_token;
+  assert.equal(await avisoAtos({ tipo: 'acesso.revogado', dados: { sub: 'atos-gil' } }), 200);
+  assert.equal((await chama('/eu', null, { token: um })).st, 401); assert.equal((await chama('/eu', null, { token: dois })).st, 401);
+  assert.equal((await chama('/eu', null, { token: outra })).st, 200);
+  assert.equal(await avisoAtos({ tipo: 'acesso.revogado', dados: { sub: 'atos-gil' } }), 200, 'o mesmo aviso de novo não faz mal');
+  assert.ok(contaDoSub('atos-gil'), 'a conta e o que ela tem ficam; só a sessão acaba'); });
+await t('avisos da Atos: tirado da lista de liberados (pelo sub ou pelo e-mail) encerra a sessão', async () => {
+  const a = (await entrarAtos({ sub: 'atos-ivo', email: 'ivo@sitio.com' })).volta.j.access_token;
+  const b = (await entrarAtos({ sub: 'atos-jo', email: 'jo@sitio.com' })).volta.j.access_token;
+  assert.equal(await avisoAtos({ tipo: 'liberado.removido', dados: { pessoas: [{ email: 'ivo@sitio.com', sub: 'atos-ivo' }, { email: 'JO@sitio.com' }] } }), 200);
+  assert.equal((await chama('/eu', null, { token: a })).st, 401); assert.equal((await chama('/eu', null, { token: b })).st, 401); });
 // ---------- webhook ----------
 const assinar = async (id, rid, ts) => { const man = 'id:' + id.toLowerCase() + ';request-id:' + rid + ';ts:' + ts + ';';
   const k = await crypto.subtle.importKey('raw', new TextEncoder().encode('segredo'), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);

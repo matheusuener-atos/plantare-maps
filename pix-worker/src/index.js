@@ -17,9 +17,10 @@
      PUT  /conta/talhoes/:chave  → guarda o resumo de um talhão   sim
      GET|PUT /conta/projetos/:chave → o projeto inteiro (gzip)    sim
      POST /conta/excluir    → apaga a conta                       sim        {confirmar: "EXCLUIR"}
+     POST /atos/avisos      → aviso da Atos (acesso tirado)        assinatura Atos-Assinatura
 
    Segredos (npx wrangler secret put …): MP_ACCESS_TOKEN, MP_WEBHOOK_SECRET, ATOS_CLIENT_SECRET
-   Segredo opcional:                    AVISO_EMAIL (recebe a cópia de cada cortesia)
+   Segredos opcionais:                  AVISO_EMAIL (recebe a cópia de cada cortesia), ATOS_AVISOS_SEGREDO (avisos da Atos)
    Variáveis ([vars] no wrangler.toml):  ORIGENS, EXPIRA, REBAIXAR_DIAS, EMAIL_DE,
                                          ATOS_CLIENT_ID, ATOS_VOLTA, PAGADOR_TESTE (só em teste: "APRO")
    Dados: D1 (binding DB) e R2 (binding PROJETOS), só pelo src/dados.js
@@ -367,6 +368,34 @@ async function atosVolta(body, env) {
   return json({ ok: true, access_token: s.token, expira: s.expira, email: conta.email, nome: conta.nome || '' });
 }
 
+/* ---------------- avisos da Atos ----------------
+   A Atos manda um POST para /atos/avisos quando alguém tira a permissão do Plantare em Minha conta
+   (acesso.revogado) ou sai da lista de liberados (liberado.removido): as sessões dessa pessoa acabam na hora.
+   Assinatura no cabeçalho Atos-Assinatura: "t=<segundos>,v1=<HMAC-SHA256 hex de '<t>.<corpo>'>", com o
+   segredo ATOS_AVISOS_SEGREDO; aviso com mais de 5 minutos não vale. Repetir o mesmo aviso não faz mal
+   (apagar o que já foi apagado). */
+async function avisoAtosValido(corpo, cabecalho, segredo) {
+  const p = {};
+  for (const parte of String(cabecalho || '').split(',')) { const i = parte.indexOf('='); if (i > 0) p[parte.slice(0, i).trim()] = parte.slice(i + 1).trim(); }
+  const t = Number(p.t);
+  if (!t || !/^[0-9a-f]{64}$/i.test(p.v1 || '') || Math.abs(Date.now() / 1000 - t) > 300) return false;
+  const k = await crypto.subtle.importKey('raw', new TextEncoder().encode(segredo), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const certo = [...new Uint8Array(await crypto.subtle.sign('HMAC', k, new TextEncoder().encode(t + '.' + corpo)))].map(b => b.toString(16).padStart(2, '0')).join('');
+  const dado = p.v1.toLowerCase(); let dif = 0;
+  for (let i = 0; i < certo.length; i++) dif |= certo.charCodeAt(i) ^ dado.charCodeAt(i);
+  return dif === 0;
+}
+async function avisoAtos(req, env) {
+  if (!env.ATOS_AVISOS_SEGREDO || !bancoPronto(env)) return new Response('avisos não configurados', { status: 503 });
+  const corpo = await req.text();
+  if (!(await avisoAtosValido(corpo, req.headers.get('atos-assinatura'), env.ATOS_AVISOS_SEGREDO))) return new Response('assinatura inválida', { status: 401 });
+  let a; try { a = JSON.parse(corpo); } catch (e) { return new Response('aviso inválido', { status: 400 }); }
+  const D = dados(env), d = (a && a.dados) || {};
+  if (a.tipo === 'acesso.revogado' && d.sub) await D.sessoesFimDaAtos({ sub: d.sub });
+  if (a.tipo === 'liberado.removido') for (const p of Array.isArray(d.pessoas) ? d.pessoas : []) if (p && (p.sub || p.email)) await D.sessoesFimDaAtos(p);
+  return new Response('ok', { status: 200 });
+}
+
 /* ---------------- entrega ---------------- */
 const b64 = u8 => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); };
 async function entregar(body, env, user) {
@@ -424,6 +453,10 @@ export default {
       if (!(await assinaturaValida(req, url, env.MP_WEBHOOK_SECRET))) return new Response('assinatura inválida', { status: 401 });
       try { await avisoRecebido(req, url, env); } catch (e) { return new Response('tente de novo', { status: 500 }); }
       return new Response('ok', { status: 200 });
+    }
+    // a Atos também não manda Origin: vale a assinatura do aviso
+    if (rota === '/atos/avisos' && req.method === 'POST') {
+      try { return await avisoAtos(req, env); } catch (e) { console.log('aviso da Atos: ' + (e && e.message)); return new Response('tente de novo', { status: 500 }); }
     }
     const c = cors(req, env);
     if (req.method === 'OPTIONS') return new Response(null, { status: c.permitida ? 204 : 403, headers: c.headers });

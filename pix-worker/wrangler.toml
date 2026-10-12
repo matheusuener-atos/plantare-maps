@@ -34,6 +34,7 @@ EXPIRA = "PT30M"
 #   npx wrangler secret put MP_ACCESS_TOKEN      ← Access Token de produção do Mercado Pago
 #   npx wrangler secret put MP_WEBHOOK_SECRET    ← "Assinatura secreta" da tela de Webhooks
 #   npx wrangler secret put ATOS_CLIENT_SECRET   ← o segredo do acesso na Atos
+#   npx wrangler secret put ATOS_AVISOS_SEGREDO  ← o segredo dos avisos (Atos › Integrações › Avisos ao seu sistema)
 #   npx wrangler secret put AVISO_EMAIL          ← seu e-mail: recebe a cópia de cada cortesia usada
 
 # Banco: contas, sessões, compras, cupons, cadastro e talhões. Esquema em migrations/;
