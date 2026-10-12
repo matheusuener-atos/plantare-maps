@@ -1,6 +1,8 @@
 name = "plantare-pix"
 main = "src/index.js"
 compatibility_date = "2026-09-01"
+# o acesso à Conta Atos é do tipo "servidor": o @atos.dev.br/entrar lê o segredo ATOS_CLIENT_SECRET de process.env
+compatibility_flags = ["nodejs_compat"]
 
 # Endereço próprio (o domínio já está na Cloudflare: o DNS é criado sozinho no deploy)
 routes = [
@@ -20,9 +22,8 @@ SUPABASE_PUBLISHABLE_KEY = "sb_publishable_avQLpdS9TwtNE9PKu-1E5w_xLI7OzR5"
 # Login pela Conta Atos (atos.dev.br › Workspace › Integrações). Vazio = login desligado (as rotas /conta/atos respondem 503).
 # ATOS_CLIENT_ID: o client_id do acesso. ATOS_VOLTA: o endereço de retorno, exatamente como cadastrado
 # (mais de um, separados por vírgula, todos cadastrados; o primeiro é o padrão).
-# Acesso do tipo "servidor" (com segredo): acrescente  compatibility_flags = ["nodejs_compat"]  no topo e
-#   npx wrangler secret put ATOS_CLIENT_SECRET   (a biblioteca lê de process.env). Acesso "público" não usa segredo.
-ATOS_CLIENT_ID = ""
+# O acesso é do tipo "servidor": o segredo vai por  npx wrangler secret put ATOS_CLIENT_SECRET  (nesta pasta).
+ATOS_CLIENT_ID = "u-tlwhzxkfv5-j5rmta"
 ATOS_VOLTA = "https://plantaremaps.com.br/"
 # Cupons agora ficam na tabela "cupons" do Supabase (um uso por conta). O segredo CUPONS antigo não é mais lido.
 # Por quantos dias uma compra paga pode ser baixada de novo (mesmo talhão, mesmas camadas). 0 = sem limite.
