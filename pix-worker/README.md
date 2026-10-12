@@ -27,7 +27,7 @@ npm install
 npx wrangler login
 npx wrangler d1 create plantare                    # o id vai em [[d1_databases]] no wrangler.toml (já está)
 npx wrangler d1 migrations apply plantare --remote # cria as tabelas (migrations/)
-npx wrangler r2 bucket create plantare-projetos    # precisa do R2 ligado no painel; depois tire o # do [[r2_buckets]]
+npx wrangler r2 bucket create plantare-projetos    # precisa do R2 ligado no painel (R2 Object Storage)
 npx wrangler secret put MP_ACCESS_TOKEN            # Access Token de produção do Mercado Pago
 npx wrangler secret put MP_WEBHOOK_SECRET          # assinatura secreta da tela de Webhooks
 npx wrangler secret put ATOS_CLIENT_SECRET         # o segredo do acesso na Atos

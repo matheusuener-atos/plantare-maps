@@ -45,13 +45,10 @@ database_name = "plantare"
 database_id = "fa237575-a9c7-49db-8151-83866aa4e67d"
 migrations_dir = "migrations"
 
-# Projetos dos talhões (o arquivo inteiro, comprimido) ficam no R2, bucket "plantare-projetos".
-# O R2 ainda não está ligado nesta conta Cloudflare: ligue no painel (R2 › Começar), crie o bucket com
-#   npx wrangler r2 bucket create plantare-projetos
-# e tire o # das três linhas abaixo. Sem ele, só /conta/projetos responde 503; o resto funciona.
-# [[r2_buckets]]
-# binding = "PROJETOS"
-# bucket_name = "plantare-projetos"
+# Projetos dos talhões (o arquivo inteiro, comprimido): R2, bucket "plantare-projetos".
+[[r2_buckets]]
+binding = "PROJETOS"
+bucket_name = "plantare-projetos"
 
 # Gerar os arquivos leva de 40 ms (talhão pequeno) a ~300 ms de CPU (575 ha).
 # O plano grátis do Workers corta em 10 ms: este serviço precisa do Workers Paid (limite padrão 30 s).
