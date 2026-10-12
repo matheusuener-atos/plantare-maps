@@ -15,17 +15,15 @@ const req = (path, body, o) => { o = o || {};
   const h = { 'content-type': 'application/json' }; if (o.orig !== null) h.origin = o.orig || ORIG; if (o.token) h.authorization = 'Bearer ' + o.token;
   return new Request('https://pix.matheusuener.com.br' + path, { method: o.metodo || (body ? 'POST' : 'GET'), headers: h, body: body ? JSON.stringify(body) : undefined }); };
 const chama = async (path, body, o) => { const r = await worker.fetch(req(path, body, o), env); return { st: r.status, j: await r.json().catch(() => null), r }; };
-F.entrar('tok-ana-0123456789abcdef', 'u-ana', 'ana@fazenda.com.br');
-F.entrar('tok-beto-0123456789abcdef', 'u-beto', 'beto@fazenda.com.br');
-const ANA = { token: 'tok-ana-0123456789abcdef' }, BETO = { token: 'tok-beto-0123456789abcdef' };
-F.cupons.push({ codigo: 'CAMPO10', desconto: 0.10, usos_max: 100, so_primeira: false, ativo: true });
-F.cupons.push({ codigo: 'BEMVINDO30', desconto: 0.30, validade: new Date(Date.now() + 30 * 864e5).toISOString(), ativo: true });
-F.cupons.push({ codigo: 'VENCIDO', desconto: 0.30, validade: new Date(Date.now() - 864e5).toISOString(), ativo: true });
-F.cupons.push({ codigo: 'PRIMEIRA', desconto: 0.20, usos_max: null, so_primeira: true, ativo: true });
-F.cupons.push({ codigo: 'UNICO', desconto: 0.15, usos_max: 1, so_primeira: false, ativo: true });
-F.cupons.push({ codigo: 'GRANDE', desconto: 0.05, area_min: 500, ativo: true });
-F.cupons.push({ codigo: 'FIXO2', fixo: 2, ativo: true });
-F.cupons.push({ codigo: 'AMIGO', gratis: true, usos_max: 5, ativo: true });
+const ANA = F.entrar('u-ana', 'ana@fazenda.com.br'), BETO = F.entrar('u-beto', 'beto@fazenda.com.br');
+F.cupom({ codigo: 'CAMPO10', desconto: 0.10, usos_max: 100, so_primeira: false, ativo: true });
+F.cupom({ codigo: 'BEMVINDO30', desconto: 0.30, validade: new Date(Date.now() + 30 * 864e5).toISOString(), ativo: true });
+F.cupom({ codigo: 'VENCIDO', desconto: 0.30, validade: new Date(Date.now() - 864e5).toISOString(), ativo: true });
+F.cupom({ codigo: 'PRIMEIRA', desconto: 0.20, usos_max: null, so_primeira: true, ativo: true });
+F.cupom({ codigo: 'UNICO', desconto: 0.15, usos_max: 1, so_primeira: false, ativo: true });
+F.cupom({ codigo: 'GRANDE', desconto: 0.05, area_min: 500, ativo: true });
+F.cupom({ codigo: 'FIXO2', fixo: 2, ativo: true });
+F.cupom({ codigo: 'AMIGO', gratis: true, usos_max: 5, ativo: true });
 const plano = JSON.parse(fs.readFileSync(new URL('./plano_arvore.json', import.meta.url)));
 const TODAS = ['linhas_ab', 'bordadura', 'percurso', 'manobras'];
 
@@ -71,14 +69,14 @@ await t('/cobranca cria Pix com preço do servidor e e-mail da conta', async () 
   const { st, j } = await chama('/cobranca', { plano: '4K4D1L', polys, camadas: ['linhas_ab', 'bordadura', 'percurso'], email: 'outro@x.com', valor: 1 }, ANA);
   assert.equal(st, 200, JSON.stringify(j)); pedido1 = j.id; const o = F.orders[j.id];
   assert.equal(o.payer.email, 'ana@fazenda.com.br'); assert.equal(o.total_amount, j.valor.toFixed(2)); assert.ok(j.valor > 850);
-  const c = F.compras.find(x => x.id === j.id); assert.equal(c.user_id, 'u-ana'); assert.equal(c.status, 'pendente'); assert.equal(c.area_hash, await hashTalhao(polys)); });
+  const c = F.compra(j.id); assert.equal(c.user_id, 'u-ana'); assert.equal(c.status, 'pendente'); assert.equal(c.area_hash, await hashTalhao(polys)); });
 await t('/cobranca só com arquivos grátis', async () => { assert.equal((await chama('/cobranca', { plano: 'x', polys, camadas: [] }, ANA)).st, 400); });
 await t('/cobranca polígono inválido', async () => { assert.equal((await chama('/cobranca', { plano: 'x', polys: [{ outer: [[999, 0], [1, 1]] }], camadas: ['linhas_ab'] }, ANA)).st, 400); });
 await t('/status de compra de outra conta → 404', async () => { assert.equal((await chama('/status/' + pedido1, null, BETO)).st, 404); });
 await t('/status ainda não pago', async () => { const { j } = await chama('/status/' + pedido1, null, ANA); assert.equal(j.pago, false); });
 await t('/pacote antes de pagar → 402', async () => { assert.equal((await chama('/pacote', { pedido: pedido1, entrada: Object.assign({}, plano, { polys }) }, ANA)).st, 402); });
 await t('/status pago grava no banco', async () => { F.pagar(pedido1); const { j } = await chama('/status/' + pedido1, null, ANA);
-  assert.ok(j.pago); assert.deepEqual(j.camadas, ['linhas_ab', 'bordadura', 'percurso']); assert.equal(F.compras.find(x => x.id === pedido1).status, 'pago'); });
+  assert.ok(j.pago); assert.deepEqual(j.camadas, ['linhas_ab', 'bordadura', 'percurso']); assert.equal(F.compra(pedido1).status, 'pago'); });
 
 // ---------- cupom por conta ----------
 await t('cupom: 1ª compra com PRIMEIRA vale para o Beto', async () => { const { j } = await chama('/preco', { polys, camadas: TODAS, cupom: 'PRIMEIRA' }, BETO); assert.ok(j.cupom.valido); });
@@ -87,8 +85,8 @@ let pixA, pixB;
 await t('cupom: gerar outro Pix com o mesmo cupom cancela o anterior', async () => {
   pixA = (await chama('/cobranca', { plano: 'B1', polys, camadas: TODAS, cupom: 'PRIMEIRA' }, BETO)).j.id;
   pixB = (await chama('/cobranca', { plano: 'B1', polys, camadas: TODAS, cupom: 'PRIMEIRA' }, BETO)).j.id;
-  assert.notEqual(pixA, pixB); assert.equal(F.orders[pixA].status, 'canceled'); assert.equal(F.compras.find(x => x.id === pixA).status, 'cancelado');
-  assert.equal(F.usos.filter(u => u.user_id === 'u-beto').length, 1); });
+  assert.notEqual(pixA, pixB); assert.equal(F.orders[pixA].status, 'canceled'); assert.equal(F.compra(pixA).status, 'cancelado');
+  assert.equal(F.usos().filter(u => u.user_id === 'u-beto').length, 1); });
 await t('cupom: depois de pago, não vale de novo na mesma conta', async () => {
   F.pagar(pixB); await chama('/status/' + pixB, null, BETO);
   const { j } = await chama('/preco', { polys, camadas: TODAS, cupom: 'PRIMEIRA' }, BETO); assert.equal(j.cupom.valido, false);
@@ -111,18 +109,18 @@ await t('/cortesia sem conta pede e-mail', async () => { const { st, j } = await
 await t('/cortesia registra compra de R$ 0 na conta, manda recibo e cópia', async () => { const n = Object.keys(F.orders).length;
   const { st, j } = await chamaE('/cortesia', { plano: '1LKP5C', polys: plano.polys, camadas: ['linhas_ab', 'bordadura'], cupom: 'amigo', email: 'outro@x.com' }, ANA);
   assert.equal(st, 200, JSON.stringify(j)); cort = j.id; assert.match(cort, /^CORT-/); assert.equal(j.recibo, true); assert.equal(Object.keys(F.orders).length, n);
-  const c = F.compras.find(x => x.id === cort); assert.equal(c.status, 'pago'); assert.equal(c.valor, 0); assert.equal(c.user_id, 'u-ana');
+  const c = F.compra(cort); assert.equal(c.status, 'pago'); assert.equal(c.valor, 0); assert.equal(c.user_id, 'u-ana');
   assert.equal(enviados[0].to, 'ana@fazenda.com.br'); assert.equal(enviados[1].to, 'dono@exemplo.com'); assert.match(enviados[1].subject, /AMIGO/); assert.match(enviados[0].text, /#1LKP5C/); });
 await t('/cortesia: mesma conta não usa duas vezes', async () => { const { st, j } = await chamaE('/cortesia', { plano: 'x', polys, camadas: ['linhas_ab'], cupom: 'AMIGO' }, ANA); assert.equal(st, 400); assert.match(j.motivo, /já usou/); });
 await t('/cortesia recusa cupom que não é de cortesia', async () => { for (const cupom of ['FIXO2', 'CAMPO10', 'NADA']) assert.equal((await chamaE('/cortesia', { plano: 'x', polys, camadas: ['linhas_ab'], cupom }, BETO)).st, 400, cupom); });
 await t('/cortesia: e-mail falhando não impede o download', async () => {
-  F.entrar('tok-caio-0123456789abcdef', 'u-caio', 'caio@x.com');
-  const { st, j } = await chamaE('/cortesia', { plano: 'x', polys, camadas: ['linhas_ab'], cupom: 'AMIGO' }, { token: 'tok-caio-0123456789abcdef' }, Object.assign({}, env, { EMAIL: { send: async () => { throw Object.assign(new Error('x'), { code: 'E_SENDER_NOT_VERIFIED' }); } } }));
+  const CAIO = F.entrar('u-caio', 'caio@x.com');
+  const { st, j } = await chamaE('/cortesia', { plano: 'x', polys, camadas: ['linhas_ab'], cupom: 'AMIGO' }, CAIO, Object.assign({}, env, { EMAIL: { send: async () => { throw Object.assign(new Error('x'), { code: 'E_SENDER_NOT_VERIFIED' }); } } }));
   assert.equal(st, 200); assert.equal(j.recibo, false); });
 await t('/cortesia de origem estranha é barrada', async () => { assert.equal((await chamaE('/cortesia', { plano: 'x', polys, camadas: ['linhas_ab'], cupom: 'AMIGO' }, Object.assign({ orig: 'https://golpe.com' }, ANA))).st, 403); });
 
 // ---------- cupom ilimitado (1SAMUEL712, BEMVINDO30, BEMVINDO90) ----------
-F.cupons.push({ codigo: 'LIVRE', gratis: true, ilimitado: true, ativo: true });
+F.cupom({ codigo: 'LIVRE', gratis: true, ilimitado: true, ativo: true });
 await t('cupom ilimitado: a mesma conta usa quantas vezes quiser', async () => {
   const um = await chamaE('/cortesia', { plano: 'L1', polys: plano.polys, camadas: ['linhas_ab'], cupom: 'LIVRE' }, ANA);
   assert.equal(um.st, 200, JSON.stringify(um.j));
@@ -133,13 +131,13 @@ await t('cupom ilimitado: vale no mesmo talhão e para outra pessoa', async () =
   const { j } = await chama('/preco', { polys: plano.polys, camadas: TODAS, cupom: 'livre' }, BETO);
   assert.ok(j.cupom.valido, JSON.stringify(j.cupom)); assert.equal(j.cupom.gratis, true); });
 await t('cupom ilimitado vencido não vale', async () => {
-  F.cupons.push({ codigo: 'LIVREVENCIDO', gratis: true, ilimitado: true, ativo: true, validade: new Date(Date.now() - 864e5).toISOString() });
+  F.cupom({ codigo: 'LIVREVENCIDO', gratis: true, ilimitado: true, ativo: true, validade: new Date(Date.now() - 864e5).toISOString() });
   const { j } = await chama('/preco', { polys, camadas: TODAS, cupom: 'LIVREVENCIDO' }, ANA);
   assert.equal(j.cupom.valido, false); assert.match(j.cupom.motivo, /venceu/); });
 await t('banco fora do ar: o preço sai e o cupom explica (não quebra tudo)', async () => {
-  const guardado = F.rpcFalha; F.rpcFalha = 'plantare_cupom_v2';
+  F.falharSql = /from cupons/;
   const { st, j } = await chama('/preco', { polys, camadas: TODAS, cupom: 'campo10' }, ANA);
-  F.rpcFalha = guardado;
+  F.falharSql = null;
   assert.equal(st, 200, JSON.stringify(j)); assert.ok(j.preco.total > 0, 'o preço continua saindo');
   assert.equal(j.cupom.valido, false); assert.match(j.cupom.motivo, /conferir o cupom/); });
 
@@ -150,19 +148,19 @@ let visita;
 await t('sem conta: Pix com e-mail do formulário e chave de acesso', async () => {
   const { st, j } = await chama('/cobranca', { plano: 'V1', polys: plano.polys, camadas: ['linhas_ab', 'bordadura'], email: 'Visita@Fazenda.com' });
   assert.equal(st, 200, JSON.stringify(j)); visita = j; assert.match(j.acesso, /^[0-9a-f]{48}$/);
-  const c = F.compras.find(x => x.id === j.id); assert.equal(c.user_id, null); assert.equal(c.email, 'visita@fazenda.com'); assert.match(c.acesso_hash, /^[0-9a-f]{64}$/); assert.notEqual(c.acesso_hash, j.acesso);
+  const c = F.compra(j.id); assert.equal(c.user_id, null); assert.equal(c.email, 'visita@fazenda.com'); assert.match(c.acesso_hash, /^[0-9a-f]{64}$/); assert.notEqual(c.acesso_hash, j.acesso);
   assert.equal(F.orders[j.id].payer.email, 'visita@fazenda.com'); });
 await t('sem conta: Pix com cupom de desconto', async () => { const { st, j } = await chama('/cobranca', { plano: 'V2', polys: talhaoEm(-50), camadas: TODAS, email: 'cupom@b.com', cupom: 'CAMPO10' });
-  assert.equal(st, 200, JSON.stringify(j)); assert.equal(j.cupom.codigo, 'CAMPO10'); const u = F.usos.find(x => x.compra_id === j.id); assert.equal(u.user_id, null); assert.equal(u.email, 'cupom@b.com'); });
+  assert.equal(st, 200, JSON.stringify(j)); assert.equal(j.cupom.codigo, 'CAMPO10'); const u = F.usos().find(x => x.compra_id === j.id); assert.equal(u.user_id, null); assert.equal(u.email, 'cupom@b.com'); });
 let cortV;
 await t('sem conta: cortesia com e-mail, chave de acesso e recibo', async () => { enviados.length = 0;
   const { st, j } = await chamaE('/cortesia', { plano: 'CV1', polys: talhaoEm(-51), camadas: ['linhas_ab'], cupom: 'amigo', email: 'Visita2@Fazenda.com' });
   assert.equal(st, 200, JSON.stringify(j)); cortV = j; assert.match(j.acesso, /^[0-9a-f]{48}$/);
-  const c = F.compras.find(x => x.id === j.id); assert.equal(c.user_id, null); assert.equal(c.email, 'visita2@fazenda.com'); assert.equal(c.status, 'pago'); assert.equal(c.acesso_hash.length, 64);
+  const c = F.compra(j.id); assert.equal(c.user_id, null); assert.equal(c.email, 'visita2@fazenda.com'); assert.equal(c.status, 'pago'); assert.equal(c.acesso_hash.length, 64);
   assert.equal(enviados[0].to, 'visita2@fazenda.com'); assert.match(enviados[1].subject, /sem conta/); });
 await t('sem conta: mesmo e-mail não usa a cortesia de novo', async () => { const { st, j } = await chamaE('/cortesia', { plano: 'CV2', polys: talhaoEm(-52), camadas: ['linhas_ab'], cupom: 'AMIGO', email: 'visita2@fazenda.com' }); assert.equal(st, 400); assert.match(j.motivo, /já usou/); });
-await t('sem conta: a conta com o mesmo e-mail também já usou', async () => { F.entrar('tok-v2-0123456789abcdef', 'u-v2', 'visita2@fazenda.com');
-  const { j } = await chama('/preco', { polys: talhaoEm(-53), camadas: TODAS, cupom: 'AMIGO' }, { token: 'tok-v2-0123456789abcdef' }); assert.equal(j.cupom.valido, false); assert.match(j.cupom.motivo, /já usou/); });
+await t('sem conta: a conta com o mesmo e-mail também já usou', async () => { const V2 = F.entrar('u-v2', 'visita2@fazenda.com');
+  const { j } = await chama('/preco', { polys: talhaoEm(-53), camadas: TODAS, cupom: 'AMIGO' }, V2); assert.equal(j.cupom.valido, false); assert.match(j.cupom.motivo, /já usou/); });
 await t('sem conta: outro e-mail no mesmo talhão não usa o cupom de novo', async () => { const { st, j } = await chamaE('/cortesia', { plano: 'CV3', polys: talhaoEm(-51), camadas: ['linhas_ab'], cupom: 'AMIGO', email: 'outra@pessoa.com' }); assert.equal(st, 400); assert.match(j.motivo, /talhão/); });
 await t('sem conta: cortesia aparece paga só com a chave', async () => { const st = async k => { const h = { origin: ORIG }; if (k) h['x-plantare-acesso'] = k;
     const r = await worker.fetch(new Request('https://pix.matheusuener.com.br/status/' + cortV.id, { headers: h }), env); return { st: r.status, j: await r.json() }; };
@@ -190,7 +188,7 @@ await t('criação assíncrona: /cobranca sem QR, /status traz o QR depois', asy
   const c = (await chama('/cobranca', { plano: 'ASYNC', polys, camadas: ['linhas_ab'] }, BETO)).j; assert.equal(c.status, 'processing'); assert.equal(c.qr_code, null);
   const s = (await chama('/status/' + c.id, null, BETO)).j; assert.equal(s.pago, false); assert.equal(s.encerrado, false); assert.match(s.qr_code, /^000201PIX/); assert.ok(s.expira); });
 await t('/status de order vencida avisa encerrado', async () => { const c = (await chama('/cobranca', { plano: 'V', polys, camadas: ['linhas_ab'] }, BETO)).j; F.orders[c.id].status = 'expired';
-  const s = (await chama('/status/' + c.id, null, BETO)).j; assert.equal(s.pago, false); assert.equal(s.encerrado, true); assert.equal(F.compras.find(x => x.id === c.id).status, 'expirado'); });
+  const s = (await chama('/status/' + c.id, null, BETO)).j; assert.equal(s.pago, false); assert.equal(s.encerrado, true); assert.equal(F.compra(c.id).status, 'expirado'); });
 await t('/status pago não repete o QR', async () => { const s = (await chama('/status/' + pedido1, null, ANA)).j; assert.equal(s.qr_code, undefined); assert.equal(s.encerrado, false); });
 
 // ---------- entrega ----------
@@ -209,7 +207,7 @@ await t('/pacote: entrega só as camadas pagas, carimbadas', async () => {
   assert.ok(!nomes.some(n => /manobras|percurso|tudo/.test(n)), 'shp só das camadas pagas');
   assert.ok(nomes.includes('LICENCA.txt')); for (const k of ['geojson', 'kml', 'kmz', 'rota']) assert.ok(j.negados.includes(k), k); assert.ok(j.negados.filter(k => k.startsWith('shp:')).every(k => !/bordadura|linhas_ab/.test(k)));
   const ab = Buffer.from(j.arquivos.find(a => a.name.endsWith('_ab.kml')).b64, 'base64').toString(); assert.match(ab, /Licenciado a ana@fazenda\.com\.br · pedido /);
-  assert.equal(F.compras.find(x => x.id === pedidoArvore).downloads, 1); });
+  assert.equal(F.compra(pedidoArvore).downloads, 1); });
 // ---------- como o percurso é entregue (etapa 03) ----------
 let pedidoTudo;
 const rotaDe=j=>Buffer.from(j.arquivos.find(x=>/_rota[.]kml$/.test(x.name)).b64,'base64').toString();
@@ -263,33 +261,78 @@ await t('/pacote: percurso fora do talhão → 400', async () => {
   const longe = Object.assign({}, entradaBoa, { legs: plano.legs.map(l => Object.assign({}, l, { p: l.p.map(q => [q[0] + 5000, q[1]]) })) });
   const { st, j } = await chama('/pacote', { pedido: pedidoArvore, entrada: longe }, ANA); assert.equal(st, 400); assert.match(j.motivo, /não é deste talhão/); });
 await t('/pacote: compra antiga demais', async () => {
-  const c = F.compras.find(x => x.id === pedidoArvore), antes = c.pago_em; c.pago_em = new Date(Date.now() - 400 * 864e5).toISOString();
-  const { st } = await chama('/pacote', { pedido: pedidoArvore, entrada: entradaBoa }, ANA); c.pago_em = antes; assert.equal(st, 403); });
+  const antes = F.compra(pedidoArvore).pago_em; F.db.prepare('update compras set pago_em = ? where id = ?').run(new Date(Date.now() - 400 * 864e5).toISOString(), pedidoArvore);
+  const { st } = await chama('/pacote', { pedido: pedidoArvore, entrada: entradaBoa }, ANA); F.db.prepare('update compras set pago_em = ? where id = ?').run(antes, pedidoArvore); assert.equal(st, 403); });
 await t('gerador: pacote completo tem os 40 arquivos do app (com o retorno à parte)', () => {
   const r = gerarPacote(entradaBoa, { camadas: TODAS, texto: '' }); assert.equal(r.arquivos.length, 40); assert.deepEqual(r.negados, []);
   assert.ok(r.arquivos.some(a => /_retorno[.]kml$/.test(a.name)) && r.arquivos.some(a => /_retorno[.]kmz$/.test(a.name))); });
 await t('gerador: entrada inválida', () => { assert.throws(() => gerarPacote(Object.assign({}, entradaBoa, { legs: [{ t: 'w', p: [[1, 'a']] }] }), { camadas: TODAS }), /inválido/); });
-await t('/eu lista as compras pagas', async () => { const { j } = await chama('/eu', null, ANA); const esperadas = F.compras.filter(c => c.user_id === 'u-ana' && c.status === 'pago').map(c => c.id); assert.ok(esperadas.includes(cort)); assert.deepEqual(j.compras.map(c => c.id).sort(), esperadas.sort()); });
+await t('/eu lista as compras pagas', async () => { const { j } = await chama('/eu', null, ANA); const esperadas = F.compras().filter(c => c.user_id === 'u-ana' && c.status === 'pago').map(c => c.id); assert.ok(esperadas.includes(cort)); assert.deepEqual(j.compras.map(c => c.id).sort(), esperadas.sort()); });
+
+// ---------- a conta: cadastro, talhões, projetos ----------
+const conta = (path, metodo, corpo, quem, extra) => { const h = Object.assign({ origin: ORIG }, extra || {}); if (quem) h.authorization = 'Bearer ' + quem.token;
+  if (corpo !== undefined && !(corpo instanceof Uint8Array)) h['content-type'] = 'application/json';
+  return worker.fetch(new Request('https://pix.matheusuener.com.br' + path, { method: metodo, headers: h, body: corpo === undefined ? undefined : corpo instanceof Uint8Array ? corpo : JSON.stringify(corpo) }), env); };
+const PERFIL = { nome: 'Ana Souza', cpf: '529.982.247-25', whatsapp: '(65) 99999-0000', cep: '78000-000', logradouro: 'Estrada da Fazenda', numero: 's/n', bairro: 'Zona rural', cidade: 'Cuiabá', uf: 'mt' };
+await t('conta: sem sessão, as rotas da conta respondem 401', async () => {
+  for (const [p, m] of [['/conta/perfil', 'GET'], ['/conta/talhoes', 'GET'], ['/conta/projetos/abcdef123456', 'GET'], ['/conta/sair', 'POST']]) assert.equal((await conta(p, m)).status, 401, p); });
+await t('conta: cadastro vazio, gravado e lido de volta (normalizado)', async () => {
+  assert.equal((await (await conta('/conta/perfil', 'GET', undefined, ANA)).json()).perfil, null);
+  const r = await conta('/conta/perfil', 'PUT', PERFIL, ANA); assert.equal(r.status, 200, await r.clone().text());
+  const p = (await (await conta('/conta/perfil', 'GET', undefined, ANA)).json()).perfil;
+  assert.equal(p.cpf, '52998224725'); assert.equal(p.whatsapp, '65999990000'); assert.equal(p.uf, 'MT'); assert.equal(p.nome, 'Ana Souza');
+  assert.equal((await (await conta('/conta/perfil', 'GET', undefined, BETO)).json()).perfil, null, 'cada conta só vê o seu'); });
+await t('conta: cadastro com CPF ou UF errados é recusado', async () => {
+  assert.equal((await conta('/conta/perfil', 'PUT', Object.assign({}, PERFIL, { cpf: '123' }), ANA)).status, 400);
+  assert.equal((await conta('/conta/perfil', 'PUT', Object.assign({}, PERFIL, { uf: 'Mato Grosso' }), ANA)).status, 400); });
+const CHAVE = 'a1b2c3d4e5f6a1b2c3d4e5f6';
+await t('conta: talhão guardado aparece na lista, e só na conta dele', async () => {
+  const r = await conta('/conta/talhoes/' + CHAVE, 'PUT', { codigo: 'A1B2C3', nome: 'Talhão da Sede', area_hash: 'f'.repeat(64), ha: 12.5, centro: [-55.1, -12.2], contorno: [[[-55, -12], [-55.1, -12], [-55.1, -12.1]]] }, ANA);
+  assert.equal(r.status, 200, await r.clone().text());
+  await conta('/conta/talhoes/' + CHAVE, 'PUT', { codigo: 'A1B2C3', nome: 'Talhão da Sede (2)', ha: 12.5 }, ANA);   // guardar de novo troca, não duplica
+  const l = (await (await conta('/conta/talhoes', 'GET', undefined, ANA)).json()).talhoes;
+  assert.equal(l.length, 1); assert.equal(l[0].nome, 'Talhão da Sede (2)'); assert.equal(l[0].chave, CHAVE);
+  assert.deepEqual((await (await conta('/conta/talhoes', 'GET', undefined, BETO)).json()).talhoes, []);
+  assert.equal((await conta('/conta/talhoes/NAO-E-HEX', 'PUT', { codigo: 'X', nome: 'x' }, ANA)).status, 400); });
+await t('conta: projeto vai e volta comprimido; outra conta não lê', async () => {
+  const { gzipSync, gunzipSync } = await import('node:zlib');
+  const gz = new Uint8Array(gzipSync(JSON.stringify({ versao: 3, arquivo: 'sede.kml' })));
+  assert.equal((await conta('/conta/projetos/' + CHAVE, 'PUT', gz, ANA, { 'content-type': 'application/gzip' })).status, 200);
+  const r = await conta('/conta/projetos/' + CHAVE, 'GET', undefined, ANA); assert.equal(r.status, 200);
+  assert.equal(JSON.parse(gunzipSync(Buffer.from(await r.arrayBuffer()))).arquivo, 'sede.kml');
+  assert.equal((await conta('/conta/projetos/' + CHAVE, 'GET', undefined, BETO)).status, 404);
+  assert.equal((await conta('/conta/projetos/' + CHAVE, 'PUT', new TextEncoder().encode('{"cru":1}'), ANA, { 'content-type': 'application/gzip' })).status, 400, 'sem gzip');
+  assert.equal((await conta('/conta/projetos/' + CHAVE, 'PUT', new Uint8Array(2 * 1024 * 1024 + 1).fill(0x1f), ANA, { 'content-type': 'application/gzip' })).status, 413); });
+await t('conta: sair encerra a sessão; sessão vencida não vale', async () => {
+  const S = F.entrar('u-sai', 'sai@x.com');
+  assert.equal((await chama('/eu', null, S)).st, 200);
+  assert.equal((await conta('/conta/sair', 'POST', undefined, S)).status, 200);
+  assert.equal((await chama('/eu', null, S)).st, 401);
+  const V = F.entrar('u-velho', 'velho@x.com'); F.db.prepare('update sessoes set expira = ? where conta_id = ?').run(new Date(Date.now() - 1000).toISOString(), 'u-velho');
+  assert.equal((await chama('/eu', null, V)).st, 401); });
 
 // ---------- excluir a conta ----------
+let DANI;
 await t('excluir conta: pede a palavra EXCLUIR', async () => {
-  F.entrar('tok-dani-0123456789abcdef', 'u-dani', 'dani@x.com');
-  assert.equal((await chama('/conta/excluir', {}, { token: 'tok-dani-0123456789abcdef' })).st, 400);
+  DANI = F.entrar('u-dani', 'dani@x.com');
+  assert.equal((await chama('/conta/excluir', {}, DANI)).st, 400);
   assert.equal((await chama('/conta/excluir', { confirmar: 'EXCLUIR' })).st, 401); });
-await t('excluir conta: apaga login, cadastro, talhões e projetos; guarda a compra sem dono', async () => {
-  const D = { token: 'tok-dani-0123456789abcdef' };
-  F.perfis.push({ user_id: 'u-dani', nome: 'Dani' }, { user_id: 'u-ana', nome: 'Ana' });
-  F.talhoes.push({ user_id: 'u-dani', chave: 'aaa' }, { user_id: 'u-ana', chave: 'bbb' });
-  F.arquivos['u-dani/aaa.json.gz'] = 1; F.arquivos['u-ana/bbb.json.gz'] = 1;
-  const id = (await chama('/cobranca', { plano: 'D1', polys, camadas: ['linhas_ab'] }, D)).j.id; F.pagar(id); await chama('/status/' + id, null, D);
-  const { st, j } = await chama('/conta/excluir', { confirmar: 'excluir' }, D); assert.equal(st, 200, JSON.stringify(j));
-  assert.deepEqual(F.excluidos, ['u-dani']); assert.equal((await chama('/eu', null, D)).st, 401);
-  assert.equal(F.perfis.filter(p => p.user_id === 'u-dani').length, 0); assert.equal(F.talhoes.filter(p => p.user_id === 'u-dani').length, 0);
-  assert.equal(F.arquivos['u-dani/aaa.json.gz'], undefined);
-  const c = F.compras.find(x => x.id === id); assert.equal(c.user_id, null); assert.match(c.acesso_hash, /^[0-9a-f]{64}$/); assert.equal(c.status, 'pago');
+await t('excluir conta: apaga conta, sessões, cadastro, talhões e projetos; guarda a compra sem dono', async () => {
+  const { gzipSync } = await import('node:zlib'), gz = new Uint8Array(gzipSync('{}'));
+  await conta('/conta/perfil', 'PUT', Object.assign({}, PERFIL, { nome: 'Dani Lima' }), DANI);
+  await conta('/conta/talhoes/' + CHAVE, 'PUT', { codigo: 'D1', nome: 'Da Dani' }, DANI);
+  await conta('/conta/projetos/' + CHAVE, 'PUT', gz, DANI, { 'content-type': 'application/gzip' });
+  const id = (await chama('/cobranca', { plano: 'D1', polys, camadas: ['linhas_ab'] }, DANI)).j.id; F.pagar(id); await chama('/status/' + id, null, DANI);
+  const { st, j } = await chama('/conta/excluir', { confirmar: 'excluir' }, DANI); assert.equal(st, 200, JSON.stringify(j));
+  assert.equal((await chama('/eu', null, DANI)).st, 401);
+  for (const tab of ['contas where id', 'sessoes where conta_id', 'perfis where conta_id', 'talhoes where conta_id']) assert.equal(F.sql('select 1 from ' + tab + ' = ?', 'u-dani').length, 0, tab);
+  assert.equal(F.projetos.objs.has('projetos/u-dani/' + CHAVE + '.json.gz'), false);
+  const c = F.compra(id); assert.equal(c.user_id, null); assert.match(c.acesso_hash, /^[0-9a-f]{64}$/); assert.equal(c.status, 'pago');
   // a outra conta não é tocada
-  assert.equal(F.perfis.filter(p => p.user_id === 'u-ana').length, 1); assert.equal(F.talhoes.filter(p => p.user_id === 'u-ana').length, 1); assert.equal(F.arquivos['u-ana/bbb.json.gz'], 1);
+  assert.equal(F.sql('select 1 from perfis where conta_id = ?', 'u-ana').length, 1); assert.equal(F.sql('select 1 from talhoes where conta_id = ?', 'u-ana').length, 1);
+  assert.equal(F.projetos.objs.has('projetos/u-ana/' + CHAVE + '.json.gz'), true);
   assert.equal((await chama('/eu', null, ANA)).st, 200); });
+
 // ---------- Entrar com Atos ----------
 const VOLTA = 'https://plantaremaps.com.br/';
 /* ida no Worker → a Atos (falsa) autoriza → volta no Worker; o.guardar mexe no que o navegador guardou */
@@ -298,6 +341,7 @@ const entrarAtos = async (pessoa, o) => { o = o || {};
   assert.equal(ida.st, 200, JSON.stringify(ida.j));
   const url = F.atosAutorizar(ida.j.url, pessoa, o), guardar = o.guardar ? o.guardar(ida.j.guardar) : ida.j.guardar;
   return { ida, url, guardar, volta: await chama('/conta/atos/volta', { url, guardar }) }; };
+const contaDoSub = sub => F.sql('select * from contas where atos_sub = ?', sub)[0];
 await t('Atos: sem ATOS_CLIENT_ID as rotas respondem 503', async () => {
   const semAtos = Object.assign({}, env, { ATOS_CLIENT_ID: '' });
   for (const r of ['/conta/atos/ida', '/conta/atos/volta']) assert.equal((await worker.fetch(req(r, {}), semAtos)).status, 503, r); });
@@ -310,47 +354,44 @@ await t('Atos: a ida leva PKCE S256, state, nonce e a volta cadastrada', async (
   assert.equal(new URL((await chama('/conta/atos/ida', { volta: 'http://localhost:8787/' })).j.url).searchParams.get('redirect_uri'), 'http://localhost:8787/');
   assert.equal(new URL((await chama('/conta/atos/ida', { volta: 'https://golpe.com/' })).j.url).searchParams.get('redirect_uri'), VOLTA);   // volta fora da lista: a padrão
   assert.equal(new URL((await chama('/conta/atos/ida', { volta: VOLTA, criarConta: true })).j.url).searchParams.get('prompt'), 'create'); });
-await t('Atos: quem já tinha conta (Google ou e-mail) cai na mesma, com as compras', async () => {
-  const { volta } = await entrarAtos({ sub: 'atos-ana', email: 'Ana@Fazenda.com.br', name: 'Ana Souza' });
-  assert.equal(volta.st, 200, JSON.stringify(volta.j)); assert.equal(volta.j.email, 'ana@fazenda.com.br'); assert.equal(volta.j.nome, 'Ana Souza'); assert.ok(volta.j.refresh_token);
-  assert.equal(F.contasAtos['atos-ana'], 'u-ana');
-  const eu = await chama('/eu', null, { token: volta.j.access_token }); assert.equal(eu.st, 200); assert.ok(eu.j.compras.some(c => c.id === pedido1)); });
-await t('Atos: a entrada seguinte vai pelo sub, e o e-mail trocado na Atos acompanha', async () => {
-  const { volta } = await entrarAtos({ sub: 'atos-ana', email: 'ana.nova@fazenda.com.br' });
-  assert.equal(volta.st, 200, JSON.stringify(volta.j)); assert.equal(volta.j.email, 'ana.nova@fazenda.com.br');
-  assert.equal(F.tokens[volta.j.access_token].id, 'u-ana'); assert.equal(F.usuarios.find(u => u.id === 'u-ana').email, 'ana.nova@fazenda.com.br'); });
-await t('Atos: e-mail de uma conta já ligada a outra Conta Atos → 409, sem tocar nela', async () => {
-  const { volta } = await entrarAtos({ sub: 'atos-intruso', email: 'ana.nova@fazenda.com.br' });
-  assert.equal(volta.st, 409); assert.match(volta.j.motivo, /outra Conta Atos/); assert.equal(F.contasAtos['atos-intruso'], undefined); });
 let caio;
-await t('Atos: pessoa nova ganha uma conta do Plantare', async () => { const n = F.usuarios.length;
-  const { volta } = await entrarAtos({ sub: 'atos-caio', email: 'caio@sitio.com', name: 'Caio' });
-  assert.equal(volta.st, 200, JSON.stringify(volta.j)); assert.equal(F.usuarios.length, n + 1); caio = F.contasAtos['atos-caio'];
-  assert.equal(F.usuarios.find(u => u.id === caio).email, 'caio@sitio.com'); assert.equal(F.usuarios.find(u => u.id === caio).app_metadata.atos_sub, 'atos-caio');
+await t('Atos: a primeira entrada cria a conta e abre uma sessão de 30 dias', async () => {
+  const { volta } = await entrarAtos({ sub: 'atos-caio', email: 'Caio@Sitio.com', name: 'Caio' });
+  assert.equal(volta.st, 200, JSON.stringify(volta.j)); assert.equal(volta.j.email, 'caio@sitio.com'); assert.equal(volta.j.nome, 'Caio');
+  assert.match(volta.j.access_token, /^[0-9a-f]{64}$/); assert.ok(Math.abs(Date.parse(volta.j.expira) - Date.now() - 30 * 864e5) < 60e3);
+  caio = contaDoSub('atos-caio'); assert.ok(caio && /^c-/.test(caio.id));
+  assert.equal(F.sql('select 1 from sessoes where hash = ?', volta.j.access_token).length, 0, 'o banco guarda só o hash');
   assert.deepEqual((await chama('/eu', null, { token: volta.j.access_token })).j.compras, []); });
-await t('Atos: state trocado é recusado e nada é criado', async () => { const n = F.usuarios.length;
+await t('Atos: a entrada seguinte vai pelo sub, e o e-mail trocado na Atos acompanha', async () => {
+  const { volta } = await entrarAtos({ sub: 'atos-caio', email: 'caio.novo@sitio.com', name: 'Caio' });
+  assert.equal(volta.st, 200); assert.equal(contaDoSub('atos-caio').id, caio.id); assert.equal(contaDoSub('atos-caio').email, 'caio.novo@sitio.com');
+  assert.equal((await chama('/eu', null, { token: volta.j.access_token })).j.email, 'caio.novo@sitio.com'); });
+await t('Atos: outra Conta Atos com o mesmo e-mail é outra conta', async () => {
+  const { volta } = await entrarAtos({ sub: 'atos-outro', email: 'caio.novo@sitio.com' });
+  assert.equal(volta.st, 200); assert.notEqual(contaDoSub('atos-outro').id, caio.id); });
+await t('Atos: state trocado é recusado e nada é criado', async () => {
   const { volta } = await entrarAtos({ sub: 'atos-dora', email: 'dora@sitio.com' }, { guardar: g => Object.assign({}, g, { state: 'outro-state-qualquer-1234' }) });
-  assert.equal(volta.st, 400); assert.match(volta.j.motivo, /state/); assert.equal(F.usuarios.length, n); });
+  assert.equal(volta.st, 400); assert.match(volta.j.motivo, /state/); assert.equal(contaDoSub('atos-dora'), undefined); });
 await t('Atos: o mesmo código não vale duas vezes', async () => {
-  const r = await entrarAtos({ sub: 'atos-caio', email: 'caio@sitio.com' }); assert.equal(r.volta.st, 200);
+  const r = await entrarAtos({ sub: 'atos-caio', email: 'caio.novo@sitio.com' }); assert.equal(r.volta.st, 200);
   const de_novo = await chama('/conta/atos/volta', { url: r.url, guardar: r.guardar }); assert.equal(de_novo.st, 400); assert.match(de_novo.j.motivo, /venceu|usado/); });
 await t('Atos: id_token assinado por outra chave é recusado', async () => {
   const { volta } = await entrarAtos({ sub: 'atos-eva', email: 'eva@sitio.com' }, { forjar: true });
-  assert.equal(volta.st, 400); assert.match(volta.j.motivo, /assinatura/); assert.equal(F.contasAtos['atos-eva'], undefined); });
+  assert.equal(volta.st, 400); assert.match(volta.j.motivo, /assinatura/); assert.equal(contaDoSub('atos-eva'), undefined); });
 await t('Atos: e-mail não confirmado na Atos → 403', async () => {
   const { volta } = await entrarAtos({ sub: 'atos-fabio', email: 'fabio@sitio.com', email_verified: false });
-  assert.equal(volta.st, 403); assert.match(volta.j.motivo, /confirmado/); assert.equal(F.contasAtos['atos-fabio'], undefined); });
+  assert.equal(volta.st, 403); assert.match(volta.j.motivo, /confirmado/); assert.equal(contaDoSub('atos-fabio'), undefined); });
 await t('Atos: conta sem acesso ao aplicativo volta com a mensagem da Atos', async () => {
   const { volta } = await entrarAtos({ erro: 'access_denied' }); assert.equal(volta.st, 403); assert.match(volta.j.motivo, /não tem acesso/); });
 await t('Atos: acesso confidencial manda o segredo (client_secret_basic)', async () => {
   F.atosConfidencial = 's3gredo-do-teste'; process.env.ATOS_CLIENT_SECRET = 's3gredo-do-teste';
-  try { assert.equal((await entrarAtos({ sub: 'atos-caio', email: 'caio@sitio.com' })).volta.st, 200);
-    process.env.ATOS_CLIENT_SECRET = 'outro'; assert.equal((await entrarAtos({ sub: 'atos-caio', email: 'caio@sitio.com' })).volta.st, 400); }
+  try { assert.equal((await entrarAtos({ sub: 'atos-caio', email: 'caio.novo@sitio.com' })).volta.st, 200);
+    process.env.ATOS_CLIENT_SECRET = 'outro'; assert.equal((await entrarAtos({ sub: 'atos-caio', email: 'caio.novo@sitio.com' })).volta.st, 400); }
   finally { F.atosConfidencial = null; delete process.env.ATOS_CLIENT_SECRET; } });
-await t('Atos: excluir a conta desfaz a ligação; entrar de novo abre uma conta nova', async () => {
-  const tok = (await entrarAtos({ sub: 'atos-caio', email: 'caio@sitio.com' })).volta.j.access_token;
-  assert.equal((await chama('/conta/excluir', { confirmar: 'EXCLUIR' }, { token: tok })).st, 200); assert.equal(F.contasAtos['atos-caio'], undefined);
-  const { volta } = await entrarAtos({ sub: 'atos-caio', email: 'caio@sitio.com' }); assert.equal(volta.st, 200); assert.notEqual(F.contasAtos['atos-caio'], caio); });
+await t('Atos: excluir a conta e entrar de novo abre uma conta nova, vazia', async () => {
+  const tok = (await entrarAtos({ sub: 'atos-caio', email: 'caio.novo@sitio.com' })).volta.j.access_token;
+  assert.equal((await chama('/conta/excluir', { confirmar: 'EXCLUIR' }, { token: tok })).st, 200); assert.equal(contaDoSub('atos-caio'), undefined);
+  const { volta } = await entrarAtos({ sub: 'atos-caio', email: 'caio.novo@sitio.com' }); assert.equal(volta.st, 200); assert.notEqual(contaDoSub('atos-caio').id, caio.id); });
 // ---------- webhook ----------
 const assinar = async (id, rid, ts) => { const man = 'id:' + id.toLowerCase() + ';request-id:' + rid + ';ts:' + ts + ';';
   const k = await crypto.subtle.importKey('raw', new TextEncoder().encode('segredo'), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
@@ -359,7 +400,7 @@ await t('webhook com assinatura certa grava o pagamento', async () => {
   const id = (await chama('/cobranca', { plano: 'W1', polys, camadas: ['linhas_ab'] }, BETO)).j.id; F.pagar(id);
   const v1 = await assinar(id, 'req-1', '1742505638683');
   const r = await worker.fetch(new Request('https://pix.matheusuener.com.br/webhook?data.id=' + id + '&type=order', { method: 'POST', headers: { 'x-signature': 'ts=1742505638683,v1=' + v1, 'x-request-id': 'req-1' }, body: '{}' }), env);
-  assert.equal(r.status, 200); assert.equal(F.compras.find(x => x.id === id).status, 'pago'); });
+  assert.equal(r.status, 200); assert.equal(F.compra(id).status, 'pago'); });
 await t('webhook de order desconhecida responde 200 (sem reenvio infinito)', async () => {
   const v1 = await assinar('ORDNAOEXISTE', 'req-2', '1742505638684');
   const r = await worker.fetch(new Request('https://pix.matheusuener.com.br/webhook?data.id=ORDNAOEXISTE&type=order', { method: 'POST', headers: { 'x-signature': 'ts=1742505638684,v1=' + v1, 'x-request-id': 'req-2' }, body: '{}' }), env);

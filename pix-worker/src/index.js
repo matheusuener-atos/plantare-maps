@@ -1,4 +1,4 @@
-/* Plantare · serviço de pagamento e entrega (Cloudflare Worker + Mercado Pago + Supabase)
+/* Plantare · serviço de conta, pagamento e entrega (Cloudflare Worker + D1 + R2 + Mercado Pago + Conta Atos)
 
    Rotas                                                        conta?
      GET  /saude          → teste rápido                          não
@@ -11,11 +11,18 @@
      POST /webhook        → aviso do Mercado Pago (x-signature)   assinatura
      POST /conta/atos/ida   → começa o "Entrar com Atos"          não        {volta, criarConta?}
      POST /conta/atos/volta → confere a volta, abre a sessão      não        {url, guardar}
+     POST /conta/sair       → encerra a sessão                    sim
+     GET|PUT /conta/perfil  → cadastro (nota fiscal)              sim
+     GET  /conta/talhoes    → talhões guardados                   sim
+     PUT  /conta/talhoes/:chave  → guarda o resumo de um talhão   sim
+     GET|PUT /conta/projetos/:chave → o projeto inteiro (gzip)    sim
+     POST /conta/excluir    → apaga a conta                       sim        {confirmar: "EXCLUIR"}
 
-   Segredos (npx wrangler secret put …): MP_ACCESS_TOKEN, MP_WEBHOOK_SECRET, SUPABASE_SERVICE_KEY
+   Segredos (npx wrangler secret put …): MP_ACCESS_TOKEN, MP_WEBHOOK_SECRET, ATOS_CLIENT_SECRET
    Segredo opcional:                    AVISO_EMAIL (recebe a cópia de cada cortesia)
-   Variáveis ([vars] no wrangler.toml):  ORIGENS, SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, EXPIRA, REBAIXAR_DIAS, EMAIL_DE,
+   Variáveis ([vars] no wrangler.toml):  ORIGENS, EXPIRA, REBAIXAR_DIAS, EMAIL_DE,
                                          ATOS_CLIENT_ID, ATOS_VOLTA, PAGADOR_TESTE (só em teste: "APRO")
+   Dados: D1 (binding DB) e R2 (binding PROJETOS), só pelo src/dados.js
    E-mail (binding EMAIL, Cloudflare Email Service); se falhar, o download não trava
 
    Regras
@@ -28,6 +35,7 @@
 import { calcularPreco, areaPoligonos, PRECO, NOMES_CAMADAS } from './preco.js';
 import { gerarPacote } from './exportar.js';
 import { entrarComAtos } from '@atos.dev.br/entrar';
+import { dados } from './dados.js';
 
 const MP = 'https://api.mercadopago.com';
 const json = (obj, status, extra) => new Response(JSON.stringify(obj), { status: status || 200, headers: Object.assign({ 'content-type': 'application/json; charset=utf-8' }, extra || {}) });
@@ -39,19 +47,17 @@ function cors(req, env) {
   const permitida = ok.includes('*') || ok.includes(origem);
   return { permitida, headers: permitida ? {
     'access-control-allow-origin': origem || '*', 'vary': 'origin',
-    'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'content-type, authorization, x-plantare-acesso', 'access-control-max-age': '86400' } : {} };
+    'access-control-allow-methods': 'GET, POST, PUT, OPTIONS', 'access-control-allow-headers': 'content-type, authorization, x-plantare-acesso', 'access-control-max-age': '86400' } : {} };
 }
 
-/* ---------------- Supabase ---------------- */
-function bancoPronto(env) { return !!(env.SUPABASE_URL && env.SUPABASE_SERVICE_KEY); }
-/* quem está chamando: confere o token de login no próprio Supabase */
+/* ---------------- conta e banco ---------------- */
+function bancoPronto(env) { return dados(env).pronto(); }
+/* quem está chamando: o token de sessão que o Worker deu no "Entrar com Atos" */
+const tokenDe = req => { const m = (req.headers.get('authorization') || '').match(/^Bearer\s+([0-9a-f]{64})$/i); return m ? m[1].toLowerCase() : null; };
 async function usuario(req, env) {
-  const m = (req.headers.get('authorization') || '').match(/^Bearer\s+([\w.-]{20,4096})$/i);
-  if (!m || !bancoPronto(env)) return null;
-  const r = await fetch(env.SUPABASE_URL + '/auth/v1/user', { headers: { apikey: env.SUPABASE_PUBLISHABLE_KEY || env.SUPABASE_SERVICE_KEY, authorization: 'Bearer ' + m[1] } });
-  if (!r.ok) return null;
-  const u = await r.json().catch(() => null);
-  return u && u.id && u.email ? { id: u.id, email: String(u.email).toLowerCase() } : null;
+  const t = tokenDe(req);
+  if (!t || !bancoPronto(env)) return null;
+  return dados(env).contaDaSessao(t);
 }
 async function exigirUsuario(req, env) {
   if (!bancoPronto(env)) throw new Falha('Serviço sem banco configurado.', 503);
@@ -59,19 +65,6 @@ async function exigirUsuario(req, env) {
   if (!u) throw new Falha('Entre na sua conta para continuar.', 401);
   return u;
 }
-/* banco pela API REST, com a chave secreta (passa por cima do RLS; nunca sai do Worker) */
-async function sb(env, caminho, op) {
-  op = op || {};
-  const k = env.SUPABASE_SERVICE_KEY;
-  const h = { apikey: k, 'content-type': 'application/json', accept: 'application/json' };
-  if (/^eyJ/.test(k)) h.authorization = 'Bearer ' + k;      // chave antiga (service_role JWT)
-  if (op.prefer) h.prefer = op.prefer;
-  const r = await fetch(env.SUPABASE_URL + '/rest/v1/' + caminho, { method: op.method || 'GET', headers: h, body: op.body !== undefined ? JSON.stringify(op.body) : undefined });
-  const t = await r.text(); let d = null; try { d = t ? JSON.parse(t) : null; } catch (e) { d = t; }
-  if (!r.ok) { const e = new Error('banco ' + r.status + ': ' + String((d && d.message) || t).slice(0, 200)); e.banco = d; throw e; }
-  return d;
-}
-const rpc = (env, fn, args) => sb(env, 'rpc/' + fn, { method: 'POST', body: args });
 const q = encodeURIComponent;
 
 /* ---------------- talhão ---------------- */
@@ -116,8 +109,9 @@ async function orcar(body, env, user) {
     const email = emailDe(body, user);
     let r = null;
     try {
-      r = await rpc(env, 'plantare_cupom_v2', { p_codigo: cod, p_user: user ? user.id : null, p_email: EMAIL_OK(email) ? email : null,
-        p_ha: Math.round(ha * 100) / 100, p_area: await hashTalhao(body.polys) });
+      if (!bancoPronto(env)) throw new Error('sem banco');
+      r = await dados(env).cupomConferir({ codigo: cod, conta: user ? user.id : null, email: EMAIL_OK(email) ? email : null,
+        ha: Math.round(ha * 100) / 100, area: await hashTalhao(body.polys) });
     } catch (e) {
       // banco fora do ar ou função ainda não instalada: o preço continua saindo, só o cupom não vale agora
       console.log('cupom: ' + (e && e.message));
@@ -191,16 +185,16 @@ async function criarCobranca(body, env, user) {
     body: JSON.stringify(pedido) });
   const d = await r.json().catch(() => ({}));
   if (!r.ok) return json({ ok: false, motivo: 'O Mercado Pago recusou a cobrança.', detalhe: d && (d.message || (d.errors && d.errors[0] && [d.errors[0].message].concat(d.errors[0].details || []).join(' · '))) || r.status }, 502);
-  await sb(env, 'compras', { method: 'POST', prefer: 'return=minimal', body: {
-    id: String(d.id), user_id: user ? user.id : null, email, acesso_hash: acesso ? await sha256(acesso) : null,
-    plano, area_hash: area, ha: p.ha, camadas: p.camadas, valor: p.total, cupom: o.cupom ? o.cupom.codigo : null } });
+  const D = dados(env);
+  await D.compraNova({ id: String(d.id), user_id: user ? user.id : null, email, acesso_hash: acesso ? await sha256(acesso) : null,
+    plano, area_hash: area, ha: p.ha, camadas: p.camadas, valor: p.total, cupom: o.cupom ? o.cupom.codigo : null });
   if (o.cupom && !o.cupom.ilimitado) {
     try {
-      const antiga = await rpc(env, 'plantare_reservar_cupom_v2', { p_codigo: o.cupom.codigo, p_user: user ? user.id : null, p_email: emailDe(body, user), p_compra: String(d.id) });
-      if (antiga) { await mpCancelar(antiga, env); await sb(env, 'compras?id=eq.' + q(antiga) + '&status=eq.pendente', { method: 'PATCH', prefer: 'return=minimal', body: { status: 'cancelado' } }); }
+      const antiga = await D.cupomReservar({ codigo: o.cupom.codigo, conta: user ? user.id : null, email: emailDe(body, user), compra: String(d.id) });
+      if (antiga) { await mpCancelar(antiga, env); await D.compraStatus(antiga, 'cancelado', true); }
     } catch (e) {
       await mpCancelar(d.id, env);
-      await sb(env, 'compras?id=eq.' + q(d.id), { method: 'PATCH', prefer: 'return=minimal', body: { status: 'cancelado' } });
+      await D.compraStatus(String(d.id), 'cancelado');
       throw new Falha('Você já usou este cupom.');
     }
   }
@@ -224,14 +218,14 @@ async function cortesia(body, env, user) {
   if (!p.camadas.length) throw new Falha('Escolha ao menos uma camada.');
   const plano = limparPlano(body.plano), id = 'CORT-' + crypto.randomUUID().replace(/-/g, '').slice(0, 20);
   const acesso = user ? null : novaChave();
-  await sb(env, 'compras', { method: 'POST', prefer: 'return=minimal', body: {
-    id, user_id: user ? user.id : null, email, acesso_hash: acesso ? await sha256(acesso) : null,
-    plano, area_hash: await hashTalhao(body.polys), ha: p.ha, camadas: p.camadas, valor: 0, cupom: o.cupom.codigo } });
+  const D = dados(env);
+  await D.compraNova({ id, user_id: user ? user.id : null, email, acesso_hash: acesso ? await sha256(acesso) : null,
+    plano, area_hash: await hashTalhao(body.polys), ha: p.ha, camadas: p.camadas, valor: 0, cupom: o.cupom.codigo });
   if (!o.cupom.ilimitado) {
-    try { await rpc(env, 'plantare_reservar_cupom_v2', { p_codigo: o.cupom.codigo, p_user: user ? user.id : null, p_email: email, p_compra: id }); }
-    catch (e) { await sb(env, 'compras?id=eq.' + q(id), { method: 'PATCH', prefer: 'return=minimal', body: { status: 'cancelado' } }); throw new Falha('Você já usou este cupom.'); }
+    try { await D.cupomReservar({ codigo: o.cupom.codigo, conta: user ? user.id : null, email, compra: id }); }
+    catch (e) { await D.compraStatus(id, 'cancelado'); throw new Falha('Você já usou este cupom.'); }
   }
-  await rpc(env, 'plantare_confirmar', { p_compra: id });
+  await D.compraConfirmar(id);
   const camadas = p.camadas.map(c => NOMES_CAMADAS[c]).join(', ');
   const quando = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
   const linhas = ['Plano #' + plano, p.ha.toFixed(2).replace('.', ',') + ' ha', 'Camadas: ' + camadas, 'Cupom de cortesia: ' + o.cupom.codigo, 'Valor: R$ 0,00', 'Pedido ' + id, quando];
@@ -247,8 +241,7 @@ async function cortesia(body, env, user) {
 async function compraDa(env, id, user, acesso) {
   if (!/^[\w-]{6,64}$/.test(String(id || ''))) throw new Falha('Cobrança inválida.');
   if (!user && !acesso) throw new Falha('Entre na sua conta para continuar.', 401);
-  const l = await sb(env, 'compras?id=eq.' + q(id) + '&select=*');
-  const c = l && l[0];
+  const c = await dados(env).compra(String(id));
   const dono = !!(c && user && c.user_id === user.id);
   const chave = !!(c && acesso && c.acesso_hash && /^[0-9a-f]{48}$/.test(String(acesso)) && (await sha256(String(acesso))) === c.acesso_hash);
   if (!dono && !chave) throw new Falha(user ? 'Esta cobrança não é desta conta.' : 'Cobrança não encontrada neste aparelho.', 404);
@@ -258,10 +251,10 @@ async function compraDa(env, id, user, acesso) {
 async function atualizarCompra(env, c) {
   if (c.status === 'pago' || c.status === 'cancelado' || /^CORT-/.test(c.id)) return c;
   const d = await mpOrder(c.id, env);
-  if (orderPaga(d)) { await rpc(env, 'plantare_confirmar', { p_compra: c.id }); return Object.assign({}, c, { status: 'pago', pago_em: new Date().toISOString() }); }
+  if (orderPaga(d)) { await dados(env).compraConfirmar(c.id); return Object.assign({}, c, { status: 'pago', pago_em: new Date().toISOString() }); }
   if (orderMorta(d)) {
     const st = d.status === 'expired' ? 'expirado' : 'cancelado';
-    if (c.status === 'pendente') await sb(env, 'compras?id=eq.' + q(c.id), { method: 'PATCH', prefer: 'return=minimal', body: { status: st } });
+    if (c.status === 'pendente') await dados(env).compraStatus(c.id, st, true);
     return Object.assign({}, c, { status: st });
   }
   return Object.assign({}, c, { order: d });
@@ -272,45 +265,84 @@ async function consultar(id, env, user, acesso) {
     plano: c.plano, camadas: c.camadas, ha: +c.ha, valor: +c.valor, area: c.area_hash }, !pago && c.order ? dadosPix(c.order) : {}));
 }
 async function minhasCompras(env, user) {
-  const l = await sb(env, 'compras?user_id=eq.' + q(user.id) + '&status=eq.pago&select=id,plano,area_hash,ha,camadas,valor,pago_em,downloads&order=pago_em.desc&limit=200');
-  return json({ ok: true, email: user.email, compras: l || [] });
+  const l = (await dados(env).comprasPagas(user.id)).map(c => ({ id: c.id, plano: c.plano, area_hash: c.area_hash, ha: c.ha, camadas: c.camadas, valor: c.valor,
+    cupom: c.cupom, status: c.status, criado_em: c.criado_em, pago_em: c.pago_em, downloads: c.downloads }));
+  return json({ ok: true, email: user.email, compras: l });
 }
 
 /* ---------------- excluir a conta ----------------
-   Apaga login, cadastro, talhões e projetos (Storage). As compras pagas ficam (obrigação fiscal),
-   mas desligadas da conta: user_id vazio e uma chave de acesso que ninguém tem. */
+   Apaga conta, sessões, cadastro, talhões e projetos. As compras pagas ficam (obrigação fiscal),
+   mas desligadas da conta: sem dono e com uma chave de acesso que ninguém tem. A Conta Atos não é tocada. */
 async function excluirConta(body, env, user) {
   if (String((body && body.confirmar) || '').trim().toUpperCase() !== 'EXCLUIR') throw new Falha('Digite EXCLUIR para confirmar.');
-  const k = env.SUPABASE_SERVICE_KEY, h = { apikey: k, 'content-type': 'application/json' };
-  if (/^eyJ/.test(k)) h.authorization = 'Bearer ' + k;
-  // 1) projetos guardados: projetos/<conta>/…
-  for (let volta = 0; volta < 20; volta++) {
-    const r = await fetch(env.SUPABASE_URL + '/storage/v1/object/list/projetos', { method: 'POST', headers: h, body: JSON.stringify({ prefix: user.id + '/', limit: 1000, offset: 0 }) });
-    const l = r.ok ? await r.json().catch(() => []) : [];
-    const nomes = (Array.isArray(l) ? l : []).filter(o => o && o.name).map(o => user.id + '/' + o.name);
-    if (!nomes.length) break;
-    const d = await fetch(env.SUPABASE_URL + '/storage/v1/object/projetos', { method: 'DELETE', headers: h, body: JSON.stringify({ prefixes: nomes }) });
-    if (!d.ok) throw new Falha('Não foi possível apagar os projetos agora. Tente de novo.', 502);
-    if (nomes.length < 1000) break;
-  }
-  // 2) talhões e cadastro
-  await sb(env, 'talhoes?user_id=eq.' + q(user.id), { method: 'DELETE', prefer: 'return=minimal' });
-  await sb(env, 'perfis?user_id=eq.' + q(user.id), { method: 'DELETE', prefer: 'return=minimal' });
-  // 3) compras: ficam (obrigação fiscal), sem ligação com a conta
-  const tranca = await sha256(crypto.randomUUID() + crypto.randomUUID());
-  await sb(env, 'compras?user_id=eq.' + q(user.id), { method: 'PATCH', prefer: 'return=minimal', body: { user_id: null, acesso_hash: tranca } });
-  // 4) o login (e, em cascata, os usos de cupom)
-  const r = await fetch(env.SUPABASE_URL + '/auth/v1/admin/users/' + q(user.id), { method: 'DELETE', headers: h });
-  if (!r.ok && r.status !== 404) throw new Falha('Não foi possível excluir a conta agora. Tente de novo.', 502);
+  await dados(env).contaExcluir(user.id);
   return json({ ok: true });
+}
+
+/* ---------------- cadastro, talhões e projetos da conta ---------------- */
+const soDig = s => String(s == null ? '' : s).replace(/\D/g, '');
+const texto = (v, max) => { const s = String(v == null ? '' : v).trim().replace(/\s+/g, ' '); return s.length <= max ? s : null; };
+/* o cadastro para a nota fiscal: as mesmas regras que o app confere antes de mandar */
+function perfilValido(b) {
+  b = b || {};
+  const d = { nome: texto(b.nome, 120), cpf: soDig(b.cpf), whatsapp: soDig(b.whatsapp), cep: soDig(b.cep), logradouro: texto(b.logradouro, 160),
+    numero: texto(b.numero, 20), complemento: b.complemento ? texto(b.complemento, 80) : null, bairro: texto(b.bairro, 100), cidade: texto(b.cidade, 100),
+    uf: String(b.uf || '').trim().toUpperCase(), ibge: b.ibge ? soDig(b.ibge) : null };
+  if (!d.nome || d.nome.length < 3) throw new Falha('Informe o nome completo.');
+  if (!/^\d{11}$/.test(d.cpf)) throw new Falha('CPF inválido.');
+  if (!/^\d{10,11}$/.test(d.whatsapp)) throw new Falha('WhatsApp inválido.');
+  if (!/^\d{8}$/.test(d.cep)) throw new Falha('CEP inválido.');
+  if (!d.logradouro || !d.numero || !d.bairro || !d.cidade || (b.complemento && d.complemento === null)) throw new Falha('Confira o endereço.');
+  if (!/^[A-Z]{2}$/.test(d.uf)) throw new Falha('UF inválida.');
+  if (d.ibge && !/^\d{7}$/.test(d.ibge)) d.ibge = null;
+  return d;
+}
+const CHAVE_TALHAO = /^[0-9a-f]{12,64}$/;
+function talhaoValido(chave, b) {
+  b = b || {};
+  if (!CHAVE_TALHAO.test(chave)) throw new Falha('Talhão inválido.');
+  const t = { chave, codigo: texto(b.codigo, 12), nome: texto(b.nome, 120), area_hash: b.area_hash ? String(b.area_hash) : null,
+    ha: b.ha == null || b.ha === '' ? null : +b.ha, centro: b.centro || null, contorno: b.contorno || null };
+  if (!t.codigo || !t.nome) throw new Falha('Talhão sem nome.');
+  if (t.area_hash && !/^[0-9a-f]{64}$/.test(t.area_hash)) throw new Falha('Talhão inválido.');
+  if (t.ha !== null && !isFinite(t.ha)) throw new Falha('Talhão inválido.');
+  if (t.centro && !(Array.isArray(t.centro) && t.centro.length === 2 && t.centro.every(v => isFinite(v)))) throw new Falha('Talhão inválido.');
+  if (t.contorno && JSON.stringify(t.contorno).length > 60000) throw new Falha('Contorno grande demais.');
+  return t;
+}
+const PROJETO_MAX = 2 * 1024 * 1024;
+async function rotaDaConta(rota, req, env, user) {
+  const D = dados(env);
+  if (rota === '/conta/sair' && req.method === 'POST') { await D.sessaoFim(tokenDe(req)); return json({ ok: true }); }
+  if (rota === '/conta/perfil' && req.method === 'GET') return json({ ok: true, perfil: await D.perfil(user.id) });
+  if (rota === '/conta/perfil' && req.method === 'PUT') { const p = perfilValido(await req.json().catch(() => null)); await D.perfilGravar(user.id, p); return json({ ok: true, perfil: p }); }
+  if (rota === '/conta/talhoes' && req.method === 'GET') return json({ ok: true, talhoes: await D.talhoes(user.id) });
+  let m = rota.match(/^\/conta\/talhoes\/([^/]+)$/);
+  if (m && req.method === 'PUT') { await D.talhaoGravar(user.id, talhaoValido(m[1], await req.json().catch(() => null))); return json({ ok: true }); }
+  m = rota.match(/^\/conta\/projetos\/([^/]+)$/);
+  if (m) {
+    if (!CHAVE_TALHAO.test(m[1])) throw new Falha('Talhão inválido.');
+    if (!D.projetosPronto()) throw new Falha('Serviço sem armazenamento de projetos.', 503);
+    if (req.method === 'PUT') {
+      const corpo = await req.arrayBuffer();
+      if (!corpo.byteLength || corpo.byteLength > PROJETO_MAX) throw new Falha('Projeto grande demais para guardar na conta (até 2 MB comprimido).', 413);
+      const b = new Uint8Array(corpo, 0, 2); if (b[0] !== 0x1f || b[1] !== 0x8b) throw new Falha('O projeto precisa vir comprimido (gzip).');
+      await D.projetoGravar(user.id, m[1], corpo); return json({ ok: true });
+    }
+    if (req.method === 'GET') {
+      const corpo = await D.projetoLer(user.id, m[1]);
+      if (!corpo) throw new Falha('O projeto deste talhão não está na sua conta.', 404);
+      return new Response(corpo, { headers: { 'content-type': 'application/gzip', 'cache-control': 'no-store' } });
+    }
+  }
+  return null;
 }
 
 /* ---------------- Conta Atos ----------------
    O login é a Conta Atos (OpenID Connect com PKCE, pelo @atos.dev.br/entrar). Daqui sai a ida (state, nonce e
    code_verifier, que o navegador guarda) e, na volta, a troca do código e a conferência do id_token. Depois
-   abre uma sessão do Supabase da mesma pessoa: perfis, talhões, projetos e compras seguem no RLS de sempre.
-   A pessoa é ligada pelo sub da Atos (tabela contas_atos); na primeira entrada, pelo e-mail confirmado, e
-   quem já tinha conta (Google ou código por e-mail) encontra tudo. */
+   a conta do Plantare (uma por sub da Atos, criada na primeira entrada) ganha uma sessão: um token aleatório
+   de 30 dias, do qual o banco guarda só o SHA-256. */
 function atosPronto(env) { return !!(env.ATOS_CLIENT_ID && env.ATOS_VOLTA && bancoPronto(env)); }
 /* a volta é a página do app; mais de uma (ex.: teste local) vai separada por vírgula, todas cadastradas na Atos */
 function clienteAtos(env, volta) {
@@ -321,19 +353,6 @@ async function atosIda(body, env) {
   const { url, guardar } = await clienteAtos(env, body && body.volta).comecar({ criarConta: !!(body && body.criarConta) });
   return json({ ok: true, url, guardar });
 }
-/* Auth do Supabase com a chave secreta */
-function sbAuthAdmin(env, caminho, corpo, metodo) {
-  const k = env.SUPABASE_SERVICE_KEY, h = { apikey: k, 'content-type': 'application/json', accept: 'application/json' };
-  if (/^eyJ/.test(k)) h.authorization = 'Bearer ' + k;
-  return fetch(env.SUPABASE_URL + '/auth/v1/' + caminho, { method: metodo || 'POST', headers: h, body: corpo ? JSON.stringify(corpo) : undefined });
-}
-async function ligarAtos(env, sub, email) {
-  try { return await rpc(env, 'plantare_conta_atos', { p_sub: sub, p_email: email }); }
-  catch (e) {
-    if (/outra Conta Atos/.test(e.message)) throw new Falha('A conta do Plantare com o e-mail ' + email + ' já está ligada a outra Conta Atos.', 409);
-    throw e;
-  }
-}
 async function atosVolta(body, env) {
   let p;
   try { p = await clienteAtos(env, body && body.guardar && body.guardar.voltaPara).concluir(String((body && body.url) || ''), body && body.guardar); }
@@ -342,30 +361,10 @@ async function atosVolta(body, env) {
     throw e;
   }
   if (!p.email || !p.emailVerificado) throw new Falha('O e-mail da sua Conta Atos ainda não foi confirmado. Confirme na Atos e entre de novo.', 403);
-  const email = p.email.toLowerCase();
-  let uid = await ligarAtos(env, p.id, email);
-  if (!uid) {
-    const r = await sbAuthAdmin(env, 'admin/users', { email, email_confirm: true, app_metadata: { provider: 'atos', atos_sub: p.id }, user_metadata: { nome: p.nome } });
-    if (!r.ok && r.status !== 422) throw new Falha('Não foi possível abrir a sua conta agora. Tente de novo.', 502);   // 422: outra entrada criou ao mesmo tempo
-    uid = await ligarAtos(env, p.id, email);
-    if (!uid) throw new Falha('Não foi possível abrir a sua conta agora. Tente de novo.', 502);
-  }
-  // o e-mail mudou na Atos: acompanha (se outra conta do Plantare já usa o novo, fica o antigo)
-  const ru = await sbAuthAdmin(env, 'admin/users/' + q(uid), null, 'GET');
-  const u = ru.ok ? await ru.json().catch(() => null) : null;
-  if (!u || !u.email) throw new Falha('Não foi possível abrir a sua conta agora. Tente de novo.', 502);
-  let emailConta = String(u.email).toLowerCase();
-  if (emailConta !== email && (await sbAuthAdmin(env, 'admin/users/' + q(uid), { email, email_confirm: true }, 'PUT')).ok) emailConta = email;
-  // a sessão: um link de entrada gerado aqui (nenhum e-mail sai) e conferido na hora
-  const rl = await sbAuthAdmin(env, 'admin/generate_link', { type: 'magiclink', email: emailConta });
-  const l = rl.ok ? await rl.json().catch(() => null) : null;
-  const hash = l && (l.hashed_token || (l.properties && l.properties.hashed_token));
-  if (!hash) throw new Falha('Não foi possível abrir a sua conta agora. Tente de novo.', 502);
-  const rs = await fetch(env.SUPABASE_URL + '/auth/v1/verify', { method: 'POST', headers: { apikey: env.SUPABASE_PUBLISHABLE_KEY || env.SUPABASE_SERVICE_KEY, 'content-type': 'application/json' },
-    body: JSON.stringify({ type: 'magiclink', token_hash: hash }) });
-  const s = rs.ok ? await rs.json().catch(() => null) : null;
-  if (!s || !s.access_token || !s.refresh_token) throw new Falha('Não foi possível abrir a sua conta agora. Tente de novo.', 502);
-  return json({ ok: true, access_token: s.access_token, refresh_token: s.refresh_token, expires_in: s.expires_in, email: emailConta, nome: p.nome || '' });
+  const D = dados(env);
+  const conta = await D.contaDaAtos({ sub: p.id, email: p.email.toLowerCase(), nome: p.nome });
+  const s = await D.sessaoNova(conta.id);
+  return json({ ok: true, access_token: s.token, expira: s.expira, email: conta.email, nome: conta.nome || '' });
 }
 
 /* ---------------- entrega ---------------- */
@@ -384,7 +383,7 @@ async function entregar(body, env, user) {
   try { r = gerarPacote(e, { camadas: c.camadas, texto }); } catch (err) { throw new Falha(err.message || 'Plano inválido.'); }
   const enc = new TextEncoder();
   r.arquivos.push({ name: 'LICENCA.txt', data: enc.encode(texto.replace(/ · /g, '\r\n') + '\r\nCamadas: ' + c.camadas.map(k => NOMES_CAMADAS[k] || k).join(', ') + '\r\n') });
-  try { await sb(env, 'compras?id=eq.' + q(c.id), { method: 'PATCH', prefer: 'return=minimal', body: { downloads: (c.downloads || 0) + 1, ultimo_download: new Date().toISOString() } }); } catch (err) { /* contador não impede a entrega */ }
+  try { await dados(env).compraBaixada(c.id, (c.downloads || 0) + 1); } catch (err) { /* contador não impede a entrega */ }
   return json({ ok: true, pedido: c.id, camadas: c.camadas, negados: r.negados, costura: r.costura, arquivos: r.arquivos.map(a => ({ name: a.name, b64: b64(a.data) })) });
 }
 
@@ -414,7 +413,7 @@ async function avisoRecebido(req, url, env) {
   let d;
   // order que o Mercado Pago não conhece (teste, outro sistema): responde 200, senão ele reenvia sem parar
   try { d = await mpOrder(id, env); } catch (e) { if (e instanceof Falha && e.status === 404) return; throw e; }
-  if (lerRef(d.external_reference) && orderPaga(d)) await rpc(env, 'plantare_confirmar', { p_compra: String(d.id) });
+  if (lerRef(d.external_reference) && orderPaga(d)) await dados(env).compraConfirmar(String(d.id));
 }
 
 export default {
@@ -443,6 +442,7 @@ export default {
         return com(rota === '/conta/atos/ida' ? await atosIda(body, env) : await atosVolta(body, env));
       }
       if (rota === '/conta/excluir' && req.method === 'POST') { const u = await exigirUsuario(req, env); return com(await excluirConta(await req.json().catch(() => ({})), env, u)); }
+      if (rota.startsWith('/conta/')) { const r = await rotaDaConta(rota, req, env, await exigirUsuario(req, env)); if (r) return com(r); }
       // Pix e download: com conta ou sem (sem conta vale a chave de acesso guardada no navegador)
       if (rota === '/cobranca' && req.method === 'POST') { const u = await usuario(req, env); return com(await criarCobranca(await req.json(), env, u)); }
       if (rota === '/cortesia' && req.method === 'POST') { const u = await usuario(req, env); return com(await cortesia(await req.json(), env, u)); }
@@ -452,6 +452,7 @@ export default {
       return json({ ok: false, motivo: 'Rota não encontrada.' }, 404, c.headers);
     } catch (e) {
       if (e instanceof Falha) return json({ ok: false, motivo: e.message }, e.status, c.headers);
+      console.log('erro ' + rota + ': ' + (e && (e.stack || e.message)));
       return json({ ok: false, motivo: 'Erro no serviço de pagamento.' }, 500, c.headers);
     }
   }

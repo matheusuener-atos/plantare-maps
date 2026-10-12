@@ -1,67 +1,66 @@
-/* Mercado Pago e Supabase de mentira, para testar o Worker sem rede.
+/* Mercado Pago e Atos de mentira, e um D1 e um R2 locais, para testar o Worker sem rede.
+   O D1 é um SQLite de verdade (node:sqlite) com a mesma migração que vai ao ar (migrations/0001_inicial.sql).
    instalarFalsos() troca o fetch global; devolve o estado para os testes mexerem. */
-export function instalarFalsos(base) {
-  const E = { orders: {}, n: 0, compras: [], cupons: [], usos: [], tokens: {}, chamadas: [], perfis: [], talhoes: [], arquivos: {}, excluidos: [] };
-  const SB = 'https://banco.teste';
-  const resp = (obj, st) => new Response(obj === null ? null : JSON.stringify(obj), { status: st || 200, headers: { 'content-type': 'application/json' } });
-  const filtros = qs => { const f = []; for (const [k, v] of new URLSearchParams(qs)) if (!['select', 'order', 'limit'].includes(k) && v.startsWith('eq.')) f.push([k, v.slice(3)]); return f; };
-  const casa = (row, f) => f.every(([k, v]) => String(row[k]) === v);
-  const rpc = {
-    plantare_cupom({ p_codigo, p_user, p_ha }) {
-      const c = E.cupons.find(x => x.codigo === String(p_codigo).trim().toUpperCase());
-      if (!c || !c.ativo) return { ok: false, motivo: 'Cupom não encontrado.' };
-      if (c.validade && Date.parse(c.validade) < Date.now()) return { ok: false, motivo: 'Este cupom venceu.' };
-      if (c.area_min != null && p_ha < c.area_min) return { ok: false, motivo: 'Este cupom vale a partir de ' + c.area_min + ' ha.' };
-      if (E.usos.some(u => u.cupom === c.codigo && u.user_id === p_user && u.pago)) return { ok: false, motivo: 'Você já usou este cupom.' };
-      if (c.so_primeira && E.compras.some(x => x.user_id === p_user && x.status === 'pago')) return { ok: false, motivo: 'Este cupom é só para a primeira compra.' };
-      if (c.usos_max != null && E.usos.filter(u => u.cupom === c.codigo && u.pago && u.user_id !== p_user).length >= c.usos_max) return { ok: false, motivo: 'Os usos deste cupom acabaram.' };
-      return { ok: true, codigo: c.codigo, desconto: c.desconto ?? null, fixo: c.fixo ?? null, gratis: !!c.gratis, validade: c.validade ?? null };
-    },
-    plantare_reservar_cupom({ p_codigo, p_user, p_compra }) {
-      const u = E.usos.find(x => x.cupom === p_codigo && x.user_id === p_user);
-      if (u) { if (u.pago) throw Object.assign(new Error('cupom já usado'), { st: 400 }); const a = u.compra_id; u.compra_id = p_compra; return a !== p_compra ? a : null; }
-      E.usos.push({ cupom: p_codigo, user_id: p_user, compra_id: p_compra, pago: false }); return null;
-    },
-    // v2 (005_cupom_sem_conta.sql): a pessoa é a conta OU o e-mail; cada cupom vale uma vez por talhão
-    plantare_cupom_v2({ p_codigo, p_user, p_email, p_ha, p_area }) {
-      const c = E.cupons.find(x => x.codigo === String(p_codigo).trim().toUpperCase()), em = p_email ? String(p_email).trim().toLowerCase() : null;
-      const mesma = u => (p_user && u.user_id === p_user) || (em && u.email === em);
-      if (!c || !c.ativo) return { ok: false, motivo: 'Cupom não encontrado.' };
-      if (c.validade && Date.parse(c.validade) < Date.now()) return { ok: false, motivo: 'Este cupom venceu.' };
-      if (c.area_min != null && p_ha < c.area_min) return { ok: false, motivo: 'Este cupom vale a partir de ' + c.area_min + ' ha.' };
-      if (!c.ilimitado) {   // cupom ilimitado não conta uso nenhum
-        if (E.usos.some(u => u.cupom === c.codigo && u.pago && mesma(u))) return { ok: false, motivo: 'Você já usou este cupom.' };
-        if (p_area && E.usos.some(u => u.cupom === c.codigo && u.pago && (E.compras.find(k => k.id === u.compra_id) || {}).area_hash === p_area)) return { ok: false, motivo: 'Este cupom já foi usado neste talhão.' };
-        if (c.so_primeira && E.compras.some(x => x.status === 'pago' && ((p_user && x.user_id === p_user) || (em && String(x.email).toLowerCase() === em)))) return { ok: false, motivo: 'Este cupom é só para a primeira compra.' };
-        if (c.usos_max != null && E.usos.filter(u => u.cupom === c.codigo && u.pago && !mesma(u)).length >= c.usos_max) return { ok: false, motivo: 'Os usos deste cupom acabaram.' };
-      }
-      return { ok: true, codigo: c.codigo, desconto: c.desconto ?? null, fixo: c.fixo ?? null, gratis: !!c.gratis, validade: c.validade ?? null, ilimitado: !!c.ilimitado };
-    },
-    plantare_reservar_cupom_v2({ p_codigo, p_user, p_email, p_compra }) {
-      const c0 = E.cupons.find(x => x.codigo === String(p_codigo).trim().toUpperCase());
-      if (c0 && c0.ilimitado) return null;   // ilimitado: nada a reservar
-      const em = p_email ? String(p_email).trim().toLowerCase() : null;
-      if (!p_user && !em) throw Object.assign(new Error('sem dono'), { st: 400 });
-      const u = E.usos.find(x => x.cupom === p_codigo && (p_user ? x.user_id === p_user : (!x.user_id && x.email === em)));
-      if (u) { if (u.pago) throw Object.assign(new Error('cupom já usado'), { st: 400 }); const a = u.compra_id; u.compra_id = p_compra; u.email = em || u.email; return a !== p_compra ? a : null; }
-      E.usos.push({ cupom: p_codigo, user_id: p_user || null, email: em, compra_id: p_compra, pago: false }); return null;
-    },
-    // 007_conta_atos.sql
-    plantare_conta_atos({ p_sub, p_email }) {
-      if (E.contasAtos[p_sub]) return E.contasAtos[p_sub];
-      const em = p_email ? String(p_email).trim().toLowerCase() : null; if (!em) return null;
-      const u = E.usuarios.find(x => x.email === em); if (!u) return null;
-      if (Object.entries(E.contasAtos).some(([s, id]) => id === u.id && s !== p_sub)) throw Object.assign(new Error('conta ligada a outra Conta Atos'), { st: 400 });
-      E.contasAtos[p_sub] = u.id; return u.id;
-    },
-    plantare_confirmar({ p_compra }) {
-      const c = E.compras.find(x => x.id === p_compra); if (c) { c.status = 'pago'; c.pago_em = c.pago_em || new Date().toISOString(); }
-      E.usos.filter(u => u.compra_id === p_compra).forEach(u => u.pago = true); return null;
-    }
+import { DatabaseSync } from 'node:sqlite';
+import { readFileSync } from 'node:fs';
+import { createHash, randomBytes } from 'node:crypto';
+
+/* o D1 por cima de um SQLite: prepare/bind/first/all/run e batch (numa transação) */
+function d1(db, E) {
+  const conv = a => a.map(v => v === undefined ? null : typeof v === 'boolean' ? (v ? 1 : 0) : v);
+  class Comando {
+    constructor(sql, a) { this.sql = sql; this.a = a || []; }
+    bind(...a) { return new Comando(this.sql, a); }
+    conferir() { if (E.falharSql && E.falharSql.test(this.sql)) throw new Error('D1_ERROR: banco fora do ar'); }
+    async first(col) { this.conferir(); const r = db.prepare(this.sql).get(...conv(this.a)); return r === undefined ? null : col ? r[col] : Object.assign({}, r); }
+    async all() { this.conferir(); return { results: db.prepare(this.sql).all(...conv(this.a)).map(r => Object.assign({}, r)) }; }
+    async run() { this.conferir(); const r = db.prepare(this.sql).run(...conv(this.a)); return { meta: { changes: Number(r.changes) } }; }
+    rodarJa() { this.conferir(); return db.prepare(this.sql).run(...conv(this.a)); }
+  }
+  return {
+    prepare: sql => new Comando(sql),
+    async batch(lista) { db.exec('BEGIN'); try { const r = lista.map(c => c.rodarJa()); db.exec('COMMIT'); return r; } catch (e) { db.exec('ROLLBACK'); throw e; } }
   };
+}
+/* o R2 em memória */
+function r2() {
+  const objs = new Map();
+  return {
+    objs,
+    async put(k, corpo) { objs.set(k, new Uint8Array(corpo instanceof ArrayBuffer ? corpo : await new Response(corpo).arrayBuffer())); },
+    async get(k) { const b = objs.get(k); return b ? { arrayBuffer: async () => b.slice().buffer } : null; },
+    async delete(ks) { for (const k of [].concat(ks)) objs.delete(k); },
+    async list({ prefix }) { return { objects: [...objs.keys()].filter(k => k.startsWith(prefix)).map(key => ({ key })), truncated: false }; }
+  };
+}
+
+export function instalarFalsos(base) {
+  const E = { orders: {}, n: 0, chamadas: [] };
+  const resp = (obj, st) => new Response(obj === null ? null : JSON.stringify(obj), { status: st || 200, headers: { 'content-type': 'application/json' } });
+
+  // ---- banco ----
+  const db = new DatabaseSync(':memory:');
+  db.exec(readFileSync(new URL('../migrations/0001_inicial.sql', import.meta.url), 'utf8'));
+  E.db = db;
+  E.sql = (sql, ...a) => db.prepare(sql).all(...a).map(r => Object.assign({}, r));
+  E.projetos = r2();
+  /* compra como o Worker vê (camadas em lista, user_id = conta) */
+  E.compra = id => { const r = db.prepare('select * from compras where id = ?').get(id); return r ? Object.assign({}, r, { user_id: r.conta_id, camadas: JSON.parse(r.camadas) }) : undefined; };
+  E.compras = () => E.sql('select * from compras').map(r => Object.assign(r, { user_id: r.conta_id }));
+  E.usos = () => E.sql('select * from cupom_usos').map(r => Object.assign(r, { user_id: r.conta_id }));
+  E.cupom = c => db.prepare('insert into cupons (codigo, desconto, fixo, gratis, ilimitado, usos_max, validade, so_primeira, area_min, ativo) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(c.codigo, c.desconto ?? null, c.fixo ?? null, c.gratis ? 1 : 0, c.ilimitado ? 1 : 0, c.usos_max ?? null, c.validade ?? null, c.so_primeira ? 1 : 0, c.area_min ?? null, c.ativo === false ? 0 : 1);
+  /* uma conta com uma sessão aberta (como se tivesse entrado pela Atos); devolve {token} para chamar o Worker */
+  E.entrar = (id, email) => {
+    db.prepare('insert or ignore into contas (id, atos_sub, email, criado_em) values (?, ?, ?, ?)').run(id, 'sub-' + id, email, new Date().toISOString());
+    const token = randomBytes(32).toString('hex');
+    db.prepare('insert into sessoes (hash, conta_id, criado_em, expira) values (?, ?, ?, ?)').run(createHash('sha256').update(token).digest('hex'), id, new Date().toISOString(), new Date(Date.now() + 864e5).toISOString());
+    return { token };
+  };
+
   // ---- Atos (OpenID Connect): a chave ES256 que assina os id_token, os códigos dados em /entrar ----
   const ATOS = 'https://atos.teste', b64u = b => Buffer.from(b).toString('base64url');
-  E.usuarios = []; E.contasAtos = {}; E.links = {}; E.atosCodigos = {}; E.atosConfidencial = null;
+  E.atosCodigos = {}; E.atosConfidencial = null;
   const chaveAtos = crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
   async function idToken(corpo, outraChave) {
     const k = outraChave ? await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign']) : await chaveAtos;
@@ -79,9 +78,6 @@ export function instalarFalsos(base) {
     E.atosCodigos[code] = { pessoa, nonce: p.get('nonce'), desafio: p.get('code_challenge'), volta: p.get('redirect_uri'), cliente: p.get('client_id'), forjar: !!(op && op.forjar) };
     volta.searchParams.set('code', code); return volta.toString();
   };
-  /* ---- Supabase Auth (admin): a sessão que o Worker abre depois da Atos ---- */
-  const sessaoNova = u => { const tok = 'tok-' + u.id + '-' + Math.random().toString(36).slice(2) + '0123456789'; E.tokens[tok] = { id: u.id, email: u.email };
-    return { access_token: tok, refresh_token: 'ref-' + tok, expires_in: 3600, user: u }; };
 
   globalThis.fetch = async (url, op) => {
     op = op || {}; url = String(url); E.chamadas.push({ url, op });
@@ -103,18 +99,6 @@ export function instalarFalsos(base) {
       return resp({ token_type: 'Bearer', access_token: 'at-' + p.sub, expires_in: 3600, id_token: await idToken({ iss: ATOS, aud: cliente, sub: p.sub, email: p.email, email_verified: p.email_verified !== false,
         name: p.name || '', nonce: c.nonce, iat: agora, exp: agora + 3600 }, c.forjar) });
     }
-    if (url === SB + '/auth/v1/admin/users' && metodo === 'POST') {
-      if (op.headers.apikey !== 'sb_secret_falsa') return resp({ message: 'sem permissão' }, 401);
-      if (E.usuarios.some(u => u.email === corpo.email)) return resp({ msg: 'email_exists' }, 422);
-      const u = { id: 'u-novo-' + (E.nUsuarios = (E.nUsuarios || 0) + 1), email: corpo.email, app_metadata: corpo.app_metadata }; E.usuarios.push(u); return resp(u); }
-    if (url === SB + '/auth/v1/admin/generate_link' && metodo === 'POST') {
-      if (op.headers.apikey !== 'sb_secret_falsa') return resp({ message: 'sem permissão' }, 401);
-      const u = E.usuarios.find(x => x.email === corpo.email); if (!u || corpo.type !== 'magiclink') return resp({ msg: 'not found' }, 404);
-      const h = 'hash-' + Math.random().toString(36).slice(2); E.links[h] = u.id; return resp({ properties: { hashed_token: h } }); }
-    if (url === SB + '/auth/v1/verify' && metodo === 'POST') {
-      const uid = E.links[corpo.token_hash]; delete E.links[corpo.token_hash];
-      const u = uid && E.usuarios.find(x => x.id === uid); if (!u || corpo.type !== 'magiclink') return resp({ msg: 'Token has expired or is invalid' }, 403);
-      return resp(sessaoNova(u)); }
     // ---- Mercado Pago ----
     if (url === 'https://api.mercadopago.com/v1/orders' && metodo === 'POST') {
       const id = 'ORD' + String(++E.n).padStart(3, '0') + 'TESTE';
@@ -124,49 +108,15 @@ export function instalarFalsos(base) {
       if (/-ASYNC-/.test(corpo.external_reference)) return resp({ id, status: 'processing', status_detail: 'in_process', external_reference: corpo.external_reference, total_amount: corpo.total_amount, transactions: { payments: [{ status: 'processing' }] } }, 201);
       return resp(Object.assign({}, E.orders[id], { transactions: { payments: [{ payment_method: { id: 'pix', qr_code: '000201PIX' + id, qr_code_base64: null, ticket_url: 'https://mp/t' }, date_of_expiration: new Date(Date.now() + 18e5).toISOString() }] } }), 201);
     }
-    let m = url.match(/^https:\/\/api\.mercadopago\.com\/v1\/orders\/([^/]+)(\/cancel)?$/);
+    const m = url.match(/^https:\/\/api\.mercadopago\.com\/v1\/orders\/([^/]+)(\/cancel)?$/);
     if (m) { const o = E.orders[decodeURIComponent(m[1])]; if (!o) return resp({ message: 'not found' }, 404);
       if (m[2]) { o.status = 'canceled'; return resp(o); } return resp(o); }
-    // ---- Supabase Storage e admin (exclusão de conta) ----
-    if (url === SB + '/storage/v1/object/list/projetos' && metodo === 'POST') {
-      if (op.headers.apikey !== 'sb_secret_falsa') return resp({ message: 'sem permissão' }, 401);
-      return resp(Object.keys(E.arquivos).filter(n => n.startsWith(corpo.prefix)).map(n => ({ name: n.slice(corpo.prefix.length) }))); }
-    if (url === SB + '/storage/v1/object/projetos' && metodo === 'DELETE') { for (const n of corpo.prefixes) delete E.arquivos[n]; return resp([]); }
-    m = url.match(/^https:\/\/banco\.teste\/auth\/v1\/admin\/users\/([^/?]+)$/);
-    if (m && metodo === 'DELETE') {
-      if (op.headers.apikey !== 'sb_secret_falsa') return resp({ message: 'sem permissão' }, 401);
-      const id = decodeURIComponent(m[1]); for (const t of Object.keys(E.tokens)) if (E.tokens[t].id === id) delete E.tokens[t];
-      E.usos = E.usos.filter(u => u.user_id !== id); E.excluidos.push(id);
-      E.usuarios = E.usuarios.filter(u => u.id !== id); for (const s of Object.keys(E.contasAtos)) if (E.contasAtos[s] === id) delete E.contasAtos[s];   // cascata
-      return resp({}); }
-    if (m && (metodo === 'GET' || metodo === 'PUT')) {
-      if (op.headers.apikey !== 'sb_secret_falsa') return resp({ message: 'sem permissão' }, 401);
-      const u = E.usuarios.find(x => x.id === decodeURIComponent(m[1])); if (!u) return resp({ msg: 'User not found' }, 404);
-      if (metodo === 'PUT' && corpo.email) { if (E.usuarios.some(x => x !== u && x.email === corpo.email)) return resp({ msg: 'email_exists' }, 422); u.email = corpo.email; }
-      return resp(u); }
-    // ---- Supabase Auth ----
-    if (url === SB + '/auth/v1/user') { const t = (op.headers.authorization || '').replace(/^Bearer /, ''); return E.tokens[t] ? resp(E.tokens[t]) : resp({ msg: 'invalid JWT' }, 401); }
-    // ---- Supabase REST ----
-    m = url.match(/^https:\/\/banco\.teste\/rest\/v1\/([\w]+)(?:\/([\w]+))?(?:\?(.*))?$/);
-    if (m) {
-      if (op.headers.apikey !== 'sb_secret_falsa') return resp({ message: 'sem permissão' }, 401);
-      if (m[1] === 'rpc') {
-        // E.rpcFalha simula o banco fora do ar (ou a função ainda não instalada)
-        if (E.rpcFalha === m[2]) return resp({ message: 'Could not find the function public.' + m[2] }, 404);
-        try { return resp(rpc[m[2]](corpo)); } catch (e) { return resp({ message: e.message }, e.st || 400); } }
-      const tab = { compras: E.compras, cupons: E.cupons, cupom_usos: E.usos, perfis: E.perfis, talhoes: E.talhoes }[m[1]], f = filtros(m[3] || '');
-      if (metodo === 'DELETE') { for (let i = tab.length - 1; i >= 0; i--) if (casa(tab[i], f)) tab.splice(i, 1); return resp(null, 204); }
-      if (metodo === 'GET') return resp(tab.filter(r => casa(r, f)).sort((a, b) => String(b.pago_em).localeCompare(String(a.pago_em))));
-      if (metodo === 'POST') { if (tab.some(r => r.id === corpo.id)) return resp({ message: 'duplicate' }, 409); tab.push(Object.assign({ status: 'pendente', downloads: 0, pago_em: null, criado_em: new Date().toISOString() }, corpo)); return resp(null, 201); }
-      if (metodo === 'PATCH') { tab.filter(r => casa(r, f)).forEach(r => Object.assign(r, corpo)); return resp(null, 204); }
-    }
     if (base) return base(url, op);
     return resp({}, 404);
   };
   E.pagar = id => { E.orders[id].status = 'processed'; E.orders[id].status_detail = 'accredited'; };
-  E.env = { MP_ACCESS_TOKEN: 'token-falso-dos-testes', MP_WEBHOOK_SECRET: 'segredo', ORIGENS: 'https://plantare.matheusuener.com.br,null', EXPIRA: 'PT30M',
-    SUPABASE_URL: SB, SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_falsa', SUPABASE_SERVICE_KEY: 'sb_secret_falsa', REBAIXAR_DIAS: '365',
+  E.env = { MP_ACCESS_TOKEN: 'token-falso-dos-testes', MP_WEBHOOK_SECRET: 'segredo', ORIGENS: 'https://plantare.matheusuener.com.br,null', EXPIRA: 'PT30M', REBAIXAR_DIAS: '365',
+    DB: d1(db, E), PROJETOS: E.projetos,
     ATOS_CLIENT_ID: 'u-plantare-teste', ATOS_VOLTA: 'https://plantaremaps.com.br/,http://localhost:8787/', ATOS_EMISSOR: ATOS };
-  E.entrar = (token, id, email) => { E.tokens[token] = { id, email }; if (!E.usuarios.some(u => u.id === id)) E.usuarios.push({ id, email }); };
   return E;
 }

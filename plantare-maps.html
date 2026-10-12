@@ -7190,47 +7190,49 @@ function htmlPreco(){
 
 <script data-modulo="conta">
 "use strict";
-/* ---- conta (Conta Atos + sessão do Supabase) ----
+/* ---- conta (Conta Atos + sessão do Worker) ----
    Compras, cupons e downloads pagos ficam ligados à conta. Entra-se com a Conta Atos (veja "Entrar com Atos"
-   abaixo); a sessão que o app guarda é a do Supabase, renovada pela API dele, sem biblioteca. A chave
-   publicável pode ficar no app; a chave secreta só existe no Worker. */
-const SB_URL='https://yhzyfcdfpezgtnrrslqv.supabase.co';
-const SB_CHAVE='sb_publishable_avQLpdS9TwtNE9PKu-1E5w_xLI7OzR5';
+   abaixo); a sessão é um token de 30 dias que o Worker dá, e tudo da conta (cadastro, talhões, projetos,
+   extrato) passa por ele. Vencido o token, entra-se de novo. */
 const CONTA_CHAVE='plantare.conta';
 const CONTA={sessao:null, compras:null, erro:'', ouvintes:[]};
-function contaLer(){ try{ return JSON.parse(localStorage.getItem(CONTA_CHAVE)||'null'); }catch(e){ return null; } }
+/* sessão guardada; a do login antigo (Supabase, com refresh_token) não vale mais e é esquecida */
+function contaLer(){ try{ const s=JSON.parse(localStorage.getItem(CONTA_CHAVE)||'null');
+  if(s && !/^[0-9a-f]{64}$/.test(s.access_token||'')){ localStorage.removeItem(CONTA_CHAVE); return null; }
+  return s; }catch(e){ return null; } }
 function contaAvisar(){ for(const f of CONTA.ouvintes) try{ f(CONTA.sessao); }catch(e){} }
 function contaGravar(s){
   CONTA.sessao=s; CONTA.compras=null;
   try{ if(s) localStorage.setItem(CONTA_CHAVE, JSON.stringify(s)); else localStorage.removeItem(CONTA_CHAVE); }catch(e){}
   contaAvisar();
 }
-function jwtDados(t){ try{ const b=t.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'); return JSON.parse(decodeURIComponent(escape(atob(b+'==='.slice((b.length+3)%4))))); }catch(e){ return {}; } }
 function sessaoDe(j){
-  const d=jwtDados(j.access_token||'');
-  return {access_token:j.access_token, refresh_token:j.refresh_token, expira:(d.exp?d.exp*1000:Date.now()+(+j.expires_in||3600)*1000),
-    email:String((j.user&&j.user.email)||d.email||'').toLowerCase()};
-}
-async function sbAuth(caminho, corpo, token){
-  const r=await fetch(SB_URL+'/auth/v1/'+caminho, {method:'POST', headers:Object.assign({apikey:SB_CHAVE,'content-type':'application/json'}, token?{authorization:'Bearer '+token}:{}), body:JSON.stringify(corpo||{})});
-  let j=null; try{ j=await r.json(); }catch(e){}
-  if(!r.ok) throw new Error((j&&(j.msg||j.error_description||j.message))||'Não foi possível entrar agora.');
-  return j||{};
+  return {access_token:j.access_token, expira:Date.parse(j.expira)||Date.now()+864e5, email:String(j.email||'').toLowerCase(), nome:j.nome||''};
 }
 function contaLogada(){ return !!(CONTA.sessao||(CONTA.sessao=contaLer())); }
 function contaEmail(){ return contaLogada()?CONTA.sessao.email:''; }
-/* token válido (renova se estiver para vencer); null se não houver conta */
+/* token válido; null se não houver conta ou se venceu (aí é entrar de novo) */
 async function contaToken(){
   if(!contaLogada()) return null;
-  const s=CONTA.sessao;
-  if(s.expira-Date.now()>60e3) return s.access_token;
-  try{ const j=await sbAuth('token?grant_type=refresh_token',{refresh_token:s.refresh_token}); contaGravar(sessaoDe(j)); return CONTA.sessao.access_token; }
-  catch(e){ contaGravar(null); return null; }
+  if(CONTA.sessao.expira-Date.now()>60e3) return CONTA.sessao.access_token;
+  contaGravar(null); return null;
+}
+/* chamada da conta ao Worker; 401 = a sessão acabou (saiu em outro aparelho, venceu, conta excluída) */
+async function contaApi(caminho, op){
+  op=op||{}; const t=await contaToken(); if(!t) throw new Error('Entre na sua conta.');
+  const h={authorization:'Bearer '+t};
+  if(op.json!==undefined) h['content-type']='application/json'; else if(op.corpo!==undefined) h['content-type']=op.tipo||'application/octet-stream';
+  const r=await fetch(pixApi()+caminho, {method:op.method||'GET', headers:h, body:op.json!==undefined?JSON.stringify(op.json):op.corpo});
+  if(r.status===401){ contaGravar(null); throw new Error('Entre na sua conta de novo.'); }
+  if(op.cru){ if(!r.ok) throw new Error(op.erro||'Não foi possível falar com a sua conta agora.'); return r; }
+  let j=null; try{ j=await r.json(); }catch(e){}
+  if(!r.ok || !j || !j.ok) throw new Error((j&&j.motivo)||'Não foi possível falar com a sua conta agora.');
+  return j;
 }
 /* ---- Entrar com Atos ----
    O login é a Conta Atos. O Worker começa a ida (state, nonce e code_verifier do PKCE, que ficam guardados
-   aqui até a volta) e, na volta, troca o código, confere o id_token e devolve a sessão do Supabase da
-   mesma pessoa (perfis, talhões e compras continuam no RLS). A volta é a própria página, sem hash. */
+   aqui até a volta) e, na volta, troca o código, confere o id_token e devolve a sessão da conta do
+   Plantare dessa pessoa. A volta é a própria página, sem hash. */
 const contaVolta=()=>location.origin+location.pathname;
 const ATOS_IDA='plantare.atos.ida', ATOS_ERRO='plantare.atos.erro';
 async function pixPost(caminho, corpo){
@@ -7251,7 +7253,8 @@ async function entrarAtos(criarConta){
     location.href=j.url;
   }catch(e){ if(w) try{ w.close(); }catch(x){} CONTA.erro=e.message; contaAvisar(); }
 }
-async function sairConta(){ const t=CONTA.sessao&&CONTA.sessao.access_token; contaGravar(null); if(t) sbAuth('logout',{},t).catch(()=>{}); }
+async function sairConta(){ const t=CONTA.sessao&&CONTA.sessao.access_token; contaGravar(null);
+  if(t) fetch(pixApi()+'/conta/sair', {method:'POST', headers:{authorization:'Bearer '+t}}).catch(()=>{}); }
 /* volta da Atos: ?code=…&state=…&iss=… (ou ?error=…) */
 (()=>{
   const u=new URL(location.href);
@@ -7270,7 +7273,7 @@ async function sairConta(){ const t=CONTA.sessao&&CONTA.sessao.access_token; con
     window.close();
   };
   pixPost('/conta/atos/volta', {url:u.toString(), guardar})
-    .then(j=>{ contaGravar(Object.assign(sessaoDe(j), {email:String(j.email||'').toLowerCase(), nome:j.nome||''})); fim(''); })
+    .then(j=>{ contaGravar(sessaoDe(j)); fim(''); })
     .catch(e=>fim(e.message));
 })();
 /* login feito em outra aba ou na janela da Atos */
@@ -13744,22 +13747,12 @@ body.conta-mapa #hero,body.conta-mapa .ux-home-caption,body.conta-mapa .cena-ctl
 /* =====================================================================
    Conta na tela: miniatura no canto → card (entrar, cadastro, menu, extrato);
    "Meus talhões" e "Exibir" levam o mapa até os talhões da conta.
-   Dados direto no Supabase com o login da pessoa (RLS: cada conta só vê o que é dela):
-     perfis (cadastro para a nota fiscal), talhoes (resumo + divisa), compras (leitura),
-     Storage projetos/<conta>/<talhão>.json.gz (o projeto inteiro, para reeditar).
+   Dados pelo Worker, com o token da sessão (cada conta só vê o que é dela):
+     /conta/perfil (cadastro para a nota fiscal), /conta/talhoes (resumo + divisa), /eu (compras pagas),
+     /conta/projetos/<talhão> (o projeto inteiro, comprimido, para reeditar).
    ===================================================================== */
 const CX={perfil:undefined, talhoes:null, compras:null, tela:null, modal:false, mapa:false, pins:[], foco:null, salvarT:0, ultimo:'', volta:null};
-const contaUid=()=>{ const t=CONTA.sessao&&CONTA.sessao.access_token; return t?jwtDados(t).sub||null:null; };
 async function sha256hex(txt){ const d=new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(txt))); return [...d].map(b=>b.toString(16).padStart(2,'0')).join(''); }
-async function sbRest(caminho, op){
-  op=op||{}; const t=await contaToken(); if(!t) throw new Error('Entre na sua conta.');
-  const h={apikey:SB_CHAVE, authorization:'Bearer '+t, accept:'application/json'};
-  if(op.body!==undefined) h['content-type']='application/json'; if(op.prefer) h.prefer=op.prefer;
-  const r=await fetch(SB_URL+'/rest/v1/'+caminho, {method:op.method||'GET', headers:h, body:op.body!==undefined?JSON.stringify(op.body):undefined});
-  const txt=await r.text(); let d=null; try{ d=txt?JSON.parse(txt):null; }catch(e){ d=null; }
-  if(!r.ok) throw new Error((d&&(d.message||d.hint))||'Não foi possível falar com a sua conta agora.');
-  return d;
-}
 const soDig=s=>String(s||'').replace(/\D/g,'');
 function cpfValido(c){ c=soDig(c); if(c.length!==11 || /^(\d)\1{10}$/.test(c)) return false;
   const dv=n=>{ let s=0; for(let i=0;i<n;i++) s+=+c[i]*(n+1-i); const r=(s*10)%11; return r===10?0:r; };
@@ -13779,15 +13772,11 @@ const dataHoraBR=d=>{ try{ return new Date(d).toLocaleString('pt-BR',{day:'2-dig
 async function contaPerfil(forcar){
   if(!contaLogada()) return null;
   if(CX.perfil!==undefined && !forcar) return CX.perfil;
-  const uid=contaUid(); if(!uid) return null;
-  const l=await sbRest('perfis?select=*&user_id=eq.'+encodeURIComponent(uid));
-  CX.perfil=(l&&l[0])||null; contaAvatar(); return CX.perfil;
+  CX.perfil=(await contaApi('/conta/perfil')).perfil||null; contaAvatar(); return CX.perfil;
 }
 async function contaSalvarPerfil(d){
-  const uid=contaUid(); if(!uid) throw new Error('Entre na sua conta.');
-  const corpo=Object.assign({user_id:uid, atualizado_em:new Date().toISOString()}, d);
-  await sbRest('perfis?on_conflict=user_id', {method:'POST', prefer:'resolution=merge-duplicates,return=minimal', body:corpo});
-  CX.perfil=Object.assign({}, CX.perfil||{}, corpo); contaAvatar();
+  const j=await contaApi('/conta/perfil', {method:'PUT', json:d});
+  CX.perfil=Object.assign({}, CX.perfil||{}, j.perfil||d); contaAvatar();
 }
 
 /* ---------------- talhões da conta (salvos junto com o projeto local) ---------------- */
@@ -13799,7 +13788,7 @@ function contornoSimples(polys){
       if(dm>tol && ix>0){ keep[ix]=1; st.push([a,ix],[ix,z]); } }
     return pts.filter((p,i)=>keep[i]); };
   // só para desenhar no mapa da conta: os maiores contornos primeiro, até ~2.500 pontos no total
-  // (um mapa de dessecação pode ter mais de mil manchas; o projeto inteiro vai completo para o Storage)
+  // (um mapa de dessecação pode ter mais de mil manchas; o projeto inteiro vai completo para a conta)
   const area=r=>{ let s=0; for(let i=0,j=r.length-1;i<r.length;j=i++) s+=(r[j][0]-r[i][0])*(r[j][1]+r[i][1]); return Math.abs(s); };
   const aneis=(polys||[]).map(p=>p.outer).filter(r=>Array.isArray(r)&&r.length>=3).sort((x,y)=>area(y)-area(x));
   const out=[]; let total=0;
@@ -13818,38 +13807,35 @@ function contaTalhaoAgendar(){
 async function contaSalvarTalhaoAgora(){
   if(!contaLogada() || !E.kml || !E.polysLL || !E.centro || typeof CompressionStream==='undefined') return null;
   clearTimeout(CX.salvarT);
-  const uid=contaUid(); if(!uid) return null;
   const proj=JSON.stringify(estadoSalvo());
   const chave=(await sha256hex(String(E.idAreaBase||E.idArea||E.arquivo||'talhao'))).slice(0,24);
   const area=await hashDoTalhao(E.polysLL);
   const marca=chave+':'+area+':'+(await sha256hex(proj.replace(/"quando":"[^"]*",/,''))).slice(0,16);
   if(CX.ultimo===marca) return chave;
   const gz=await new Response(new Blob([proj]).stream().pipeThrough(new CompressionStream('gzip'))).blob();
-  const t=await contaToken(); if(!t) return null;
-  const up=await fetch(SB_URL+'/storage/v1/object/projetos/'+uid+'/'+chave+'.json.gz', {method:'POST',
-    headers:{apikey:SB_CHAVE, authorization:'Bearer '+t, 'content-type':'application/gzip', 'x-upsert':'true', 'cache-control':'no-cache'}, body:gz});
-  if(!up.ok) throw new Error('Storage respondeu '+up.status);
-  await sbRest('talhoes?on_conflict=user_id,chave', {method:'POST', prefer:'resolution=merge-duplicates,return=minimal', body:{
-    user_id:uid, chave, codigo:chave.slice(0,6).toUpperCase(), nome:String(E.arquivo||'Talhão').slice(0,120), area_hash:area,
+  if(!(await contaToken())) return null;
+  // o resumo primeiro: o talhão aparece em "Meus talhões" mesmo se o projeto inteiro não puder ser guardado agora
+  await contaApi('/conta/talhoes/'+chave, {method:'PUT', json:{
+    codigo:chave.slice(0,6).toUpperCase(), nome:String(E.arquivo||'Talhão').slice(0,120), area_hash:area,
     ha:+(areaPoligonos(E.polysLL)/1e4).toFixed(2), centro:[+E.centro[0].toFixed(6), +E.centro[1].toFixed(6)],
-    contorno:contornoSimples(E.polysLL), atualizado_em:new Date().toISOString()}});
+    contorno:contornoSimples(E.polysLL)}});
+  CX.talhoes=null;
+  await contaApi('/conta/projetos/'+chave, {method:'PUT', corpo:gz, tipo:'application/gzip'});
   CX.ultimo=marca; CX.talhoes=null;
   return chave;
 }
 async function contaTalhoes(forcar){
   if(CX.talhoes && !forcar) return CX.talhoes;
-  CX.talhoes=await sbRest('talhoes?select=id,chave,codigo,nome,area_hash,ha,centro,contorno,atualizado_em&order=atualizado_em.desc&limit=300')||[];
+  CX.talhoes=(await contaApi('/conta/talhoes')).talhoes||[];
   return CX.talhoes;
 }
 async function contaCompras(forcar){
   if(CX.compras && !forcar) return CX.compras;
-  CX.compras=await sbRest('compras?select=id,plano,area_hash,ha,camadas,valor,cupom,status,criado_em,pago_em,downloads&status=eq.pago&order=pago_em.desc&limit=300')||[];
+  CX.compras=(await contaApi('/eu')).compras||[];
   return CX.compras;
 }
 async function contaBaixarProjeto(t){
-  const tok=await contaToken(); if(!tok) throw new Error('Entre na sua conta.');
-  const r=await fetch(SB_URL+'/storage/v1/object/authenticated/projetos/'+contaUid()+'/'+t.chave+'.json.gz', {headers:{apikey:SB_CHAVE, authorization:'Bearer '+tok}});
-  if(!r.ok) throw new Error('O projeto deste talhão não está na sua conta.');
+  const r=await contaApi('/conta/projetos/'+t.chave, {cru:true, erro:'O projeto deste talhão não está na sua conta.'});
   const buf=await r.arrayBuffer();
   try{ return JSON.parse(await new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip'))).text()); }
   catch(e){ return JSON.parse(new TextDecoder().decode(buf)); }   // já veio descomprimido
