@@ -46,14 +46,75 @@ export function instalarFalsos(base) {
       if (u) { if (u.pago) throw Object.assign(new Error('cupom já usado'), { st: 400 }); const a = u.compra_id; u.compra_id = p_compra; u.email = em || u.email; return a !== p_compra ? a : null; }
       E.usos.push({ cupom: p_codigo, user_id: p_user || null, email: em, compra_id: p_compra, pago: false }); return null;
     },
+    // 007_conta_atos.sql
+    plantare_conta_atos({ p_sub, p_email }) {
+      if (E.contasAtos[p_sub]) return E.contasAtos[p_sub];
+      const em = p_email ? String(p_email).trim().toLowerCase() : null; if (!em) return null;
+      const u = E.usuarios.find(x => x.email === em); if (!u) return null;
+      if (Object.entries(E.contasAtos).some(([s, id]) => id === u.id && s !== p_sub)) throw Object.assign(new Error('conta ligada a outra Conta Atos'), { st: 400 });
+      E.contasAtos[p_sub] = u.id; return u.id;
+    },
     plantare_confirmar({ p_compra }) {
       const c = E.compras.find(x => x.id === p_compra); if (c) { c.status = 'pago'; c.pago_em = c.pago_em || new Date().toISOString(); }
       E.usos.filter(u => u.compra_id === p_compra).forEach(u => u.pago = true); return null;
     }
   };
+  // ---- Atos (OpenID Connect): a chave ES256 que assina os id_token, os códigos dados em /entrar ----
+  const ATOS = 'https://atos.teste', b64u = b => Buffer.from(b).toString('base64url');
+  E.usuarios = []; E.contasAtos = {}; E.links = {}; E.atosCodigos = {}; E.atosConfidencial = null;
+  const chaveAtos = crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+  async function idToken(corpo, outraChave) {
+    const k = outraChave ? await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign']) : await chaveAtos;
+    const cab = b64u(JSON.stringify({ alg: 'ES256', kid: 'k1', typ: 'JWT' })), cor = b64u(JSON.stringify(corpo));
+    const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, k.privateKey, new TextEncoder().encode(cab + '.' + cor));
+    return cab + '.' + cor + '.' + b64u(new Uint8Array(sig));
+  }
+  /* o que a Atos faz em /entrar: a pessoa entra e permite; devolve o endereço da volta.
+     pessoa: {sub, email, email_verified, name} ou {erro: 'access_denied'}; op.forjar assina com outra chave */
+  E.atosAutorizar = (urlIda, pessoa, op) => {
+    const u = new URL(urlIda), p = u.searchParams, volta = new URL(p.get('redirect_uri'));
+    volta.searchParams.set('state', p.get('state')); volta.searchParams.set('iss', ATOS);
+    if (pessoa.erro) { volta.searchParams.set('error', pessoa.erro); return volta.toString(); }
+    const code = 'cod-' + Math.random().toString(36).slice(2);
+    E.atosCodigos[code] = { pessoa, nonce: p.get('nonce'), desafio: p.get('code_challenge'), volta: p.get('redirect_uri'), cliente: p.get('client_id'), forjar: !!(op && op.forjar) };
+    volta.searchParams.set('code', code); return volta.toString();
+  };
+  /* ---- Supabase Auth (admin): a sessão que o Worker abre depois da Atos ---- */
+  const sessaoNova = u => { const tok = 'tok-' + u.id + '-' + Math.random().toString(36).slice(2) + '0123456789'; E.tokens[tok] = { id: u.id, email: u.email };
+    return { access_token: tok, refresh_token: 'ref-' + tok, expires_in: 3600, user: u }; };
+
   globalThis.fetch = async (url, op) => {
     op = op || {}; url = String(url); E.chamadas.push({ url, op });
-    const metodo = op.method || 'GET', corpo = op.body ? JSON.parse(op.body) : null;
+    const metodo = op.method || 'GET'; let corpo = null; try { corpo = op.body ? JSON.parse(op.body) : null; } catch (e) { corpo = null; }
+    // ---- Atos ----
+    if (url === ATOS + '/.well-known/openid-configuration') return resp({ issuer: ATOS, authorization_endpoint: ATOS + '/entrar', token_endpoint: ATOS + '/oauth/token', jwks_uri: ATOS + '/oauth/jwks',
+      revocation_endpoint: ATOS + '/oauth/revogar', code_challenge_methods_supported: ['S256'], prompt_values_supported: ['none', 'login', 'consent', 'create'], authorization_response_iss_parameter_supported: true });
+    if (url === ATOS + '/oauth/jwks') { const j = await crypto.subtle.exportKey('jwk', (await chaveAtos).publicKey); return resp({ keys: [{ kty: 'EC', crv: 'P-256', x: j.x, y: j.y, kid: 'k1', alg: 'ES256', use: 'sig' }] }); }
+    if (url === ATOS + '/oauth/token' && metodo === 'POST') {
+      const f = new URLSearchParams(op.body), h = op.headers || {}, basic = (h.authorization || '').replace(/^Basic /, '');
+      const cliente = basic ? decodeURIComponent(Buffer.from(basic, 'base64').toString().split(':')[0]) : f.get('client_id');
+      if (E.atosConfidencial && (!basic || Buffer.from(basic, 'base64').toString() !== cliente + ':' + E.atosConfidencial)) return resp({ error: 'invalid_client' }, 401);
+      if (!E.atosConfidencial && basic) return resp({ error: 'invalid_client' }, 401);
+      const c = E.atosCodigos[f.get('code')]; delete E.atosCodigos[f.get('code')];
+      if (!c || c.cliente !== cliente || c.volta !== f.get('redirect_uri')) return resp({ error: 'invalid_grant' }, 400);
+      const desafio = b64u(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(f.get('code_verifier') || ''))));
+      if (desafio !== c.desafio) return resp({ error: 'invalid_grant' }, 400);
+      const agora = Math.floor(Date.now() / 1000), p = c.pessoa;
+      return resp({ token_type: 'Bearer', access_token: 'at-' + p.sub, expires_in: 3600, id_token: await idToken({ iss: ATOS, aud: cliente, sub: p.sub, email: p.email, email_verified: p.email_verified !== false,
+        name: p.name || '', nonce: c.nonce, iat: agora, exp: agora + 3600 }, c.forjar) });
+    }
+    if (url === SB + '/auth/v1/admin/users' && metodo === 'POST') {
+      if (op.headers.apikey !== 'sb_secret_falsa') return resp({ message: 'sem permissão' }, 401);
+      if (E.usuarios.some(u => u.email === corpo.email)) return resp({ msg: 'email_exists' }, 422);
+      const u = { id: 'u-novo-' + (E.nUsuarios = (E.nUsuarios || 0) + 1), email: corpo.email, app_metadata: corpo.app_metadata }; E.usuarios.push(u); return resp(u); }
+    if (url === SB + '/auth/v1/admin/generate_link' && metodo === 'POST') {
+      if (op.headers.apikey !== 'sb_secret_falsa') return resp({ message: 'sem permissão' }, 401);
+      const u = E.usuarios.find(x => x.email === corpo.email); if (!u || corpo.type !== 'magiclink') return resp({ msg: 'not found' }, 404);
+      const h = 'hash-' + Math.random().toString(36).slice(2); E.links[h] = u.id; return resp({ properties: { hashed_token: h } }); }
+    if (url === SB + '/auth/v1/verify' && metodo === 'POST') {
+      const uid = E.links[corpo.token_hash]; delete E.links[corpo.token_hash];
+      const u = uid && E.usuarios.find(x => x.id === uid); if (!u || corpo.type !== 'magiclink') return resp({ msg: 'Token has expired or is invalid' }, 403);
+      return resp(sessaoNova(u)); }
     // ---- Mercado Pago ----
     if (url === 'https://api.mercadopago.com/v1/orders' && metodo === 'POST') {
       const id = 'ORD' + String(++E.n).padStart(3, '0') + 'TESTE';
@@ -75,7 +136,14 @@ export function instalarFalsos(base) {
     if (m && metodo === 'DELETE') {
       if (op.headers.apikey !== 'sb_secret_falsa') return resp({ message: 'sem permissão' }, 401);
       const id = decodeURIComponent(m[1]); for (const t of Object.keys(E.tokens)) if (E.tokens[t].id === id) delete E.tokens[t];
-      E.usos = E.usos.filter(u => u.user_id !== id); E.excluidos.push(id); return resp({}); }
+      E.usos = E.usos.filter(u => u.user_id !== id); E.excluidos.push(id);
+      E.usuarios = E.usuarios.filter(u => u.id !== id); for (const s of Object.keys(E.contasAtos)) if (E.contasAtos[s] === id) delete E.contasAtos[s];   // cascata
+      return resp({}); }
+    if (m && (metodo === 'GET' || metodo === 'PUT')) {
+      if (op.headers.apikey !== 'sb_secret_falsa') return resp({ message: 'sem permissão' }, 401);
+      const u = E.usuarios.find(x => x.id === decodeURIComponent(m[1])); if (!u) return resp({ msg: 'User not found' }, 404);
+      if (metodo === 'PUT' && corpo.email) { if (E.usuarios.some(x => x !== u && x.email === corpo.email)) return resp({ msg: 'email_exists' }, 422); u.email = corpo.email; }
+      return resp(u); }
     // ---- Supabase Auth ----
     if (url === SB + '/auth/v1/user') { const t = (op.headers.authorization || '').replace(/^Bearer /, ''); return E.tokens[t] ? resp(E.tokens[t]) : resp({ msg: 'invalid JWT' }, 401); }
     // ---- Supabase REST ----
@@ -97,7 +165,8 @@ export function instalarFalsos(base) {
   };
   E.pagar = id => { E.orders[id].status = 'processed'; E.orders[id].status_detail = 'accredited'; };
   E.env = { MP_ACCESS_TOKEN: 'token-falso-dos-testes', MP_WEBHOOK_SECRET: 'segredo', ORIGENS: 'https://plantare.matheusuener.com.br,null', EXPIRA: 'PT30M',
-    SUPABASE_URL: SB, SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_falsa', SUPABASE_SERVICE_KEY: 'sb_secret_falsa', REBAIXAR_DIAS: '365' };
-  E.entrar = (token, id, email) => { E.tokens[token] = { id, email }; };
+    SUPABASE_URL: SB, SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_falsa', SUPABASE_SERVICE_KEY: 'sb_secret_falsa', REBAIXAR_DIAS: '365',
+    ATOS_CLIENT_ID: 'u-plantare-teste', ATOS_VOLTA: 'https://plantaremaps.com.br/,http://localhost:8787/', ATOS_EMISSOR: ATOS };
+  E.entrar = (token, id, email) => { E.tokens[token] = { id, email }; if (!E.usuarios.some(u => u.id === id)) E.usuarios.push({ id, email }); };
   return E;
 }

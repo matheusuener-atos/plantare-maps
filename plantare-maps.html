@@ -1155,9 +1155,7 @@ dialog.cp{width:min(980px,94vw);max-height:92vh;padding:0;color:var(--palha);ove
 .pg-conta{font:11px var(--f-num);color:var(--poeira);margin:6px 0 14px}
 .pg-email{display:flex;flex-direction:column;gap:8px;margin-top:10px}
 .pg-login{display:flex;flex-direction:column;gap:8px;margin-top:12px}
-.pg-login .cupom{margin:0}
-.pg-ou{display:flex;align-items:center;gap:10px;font-size:11.5px;color:var(--poeira);letter-spacing:.04em}
-.pg-ou::before,.pg-ou::after{content:"";flex:1;height:1px;background:var(--fio2)}
+.pg-login .nota.pg-atos-criar{margin:0;text-align:center}
 .pg-quem{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:12px 0 0;font-size:12.5px;color:var(--poeira)}
 .pg-quem b{color:#EEF5ED;font-weight:600;word-break:break-all;margin-left:4px}
 .pg-email input{min-height:42px;border-radius:5px;background:rgba(3,13,9,.45);border:1px solid var(--fio2);color:#EEF5ED;padding:0 12px;font:13px var(--f-texto)}
@@ -1362,10 +1360,8 @@ dialog.gp{width:min(860px,94vw)}
       <div class="total"><span>Total</span><b id="pgTotal"></b></div>
       <div class="pg-login" id="pgLogin" hidden>
         <p class="nota" id="pgLoginNota">Entre com sua conta. A compra fica ligada a ela: dá para baixar de novo, até em outro aparelho.</p>
-        <button type="button" class="btn btn-luz btn-bloco" id="pgGoogle">Entrar com Google</button>
-        <div class="pg-ou"><span>ou pelo e-mail</span></div>
-        <div class="cupom"><input id="pgLoginEmail" type="email" autocomplete="email" inputmode="email" placeholder="voce@fazenda.com.br" aria-label="Seu e-mail"><button class="btn btn-fio" type="button" id="pgLoginEnviar">Enviar link</button></div>
-        <div class="cupom" id="pgCodigoBox" hidden><input id="pgCodigo" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="Código do e-mail" aria-label="Código do e-mail"><button class="btn btn-fio" type="button" id="pgCodigoOk">Entrar</button></div>
+        <button type="button" class="btn btn-luz btn-bloco" id="pgAtos">Entrar com Atos</button>
+        <p class="nota pg-atos-criar">Não tem Conta Atos? <button class="link" type="button" id="pgAtosCriar">Criar conta</button></p>
         <p class="cupom-msg" id="pgLoginMsg" role="status"></p>
       </div>
       <p class="pg-quem" id="pgQuem" hidden><span>Conta <b id="pgQuemEmail"></b></span><button class="link" type="button" id="pgSair">Sair</button></p>
@@ -7194,10 +7190,10 @@ function htmlPreco(){
 
 <script data-modulo="conta">
 "use strict";
-/* ---- conta (login no Supabase) ----
-   Compras, cupons e downloads pagos ficam ligados à conta. Sem biblioteca: a API de login do Supabase
-   é chamada direto (Google por janela, ou link/código por e-mail). A chave publicável pode ficar no app;
-   a chave secreta só existe no Worker. */
+/* ---- conta (Conta Atos + sessão do Supabase) ----
+   Compras, cupons e downloads pagos ficam ligados à conta. Entra-se com a Conta Atos (veja "Entrar com Atos"
+   abaixo); a sessão que o app guarda é a do Supabase, renovada pela API dele, sem biblioteca. A chave
+   publicável pode ficar no app; a chave secreta só existe no Worker. */
 const SB_URL='https://yhzyfcdfpezgtnrrslqv.supabase.co';
 const SB_CHAVE='sb_publishable_avQLpdS9TwtNE9PKu-1E5w_xLI7OzR5';
 const CONTA_CHAVE='plantare.conta';
@@ -7231,36 +7227,62 @@ async function contaToken(){
   try{ const j=await sbAuth('token?grant_type=refresh_token',{refresh_token:s.refresh_token}); contaGravar(sessaoDe(j)); return CONTA.sessao.access_token; }
   catch(e){ contaGravar(null); return null; }
 }
-/* endereço de volta do login: a própria página, sem hash */
+/* ---- Entrar com Atos ----
+   O login é a Conta Atos. O Worker começa a ida (state, nonce e code_verifier do PKCE, que ficam guardados
+   aqui até a volta) e, na volta, troca o código, confere o id_token e devolve a sessão do Supabase da
+   mesma pessoa (perfis, talhões e compras continuam no RLS). A volta é a própria página, sem hash. */
 const contaVolta=()=>location.origin+location.pathname;
-function entrarGoogle(){
-  const url=SB_URL+'/auth/v1/authorize?provider=google&redirect_to='+encodeURIComponent(contaVolta());
-  const w=window.open(url,'plantare_login','width=480,height=680');
-  if(!w){ try{ if(typeof salvar==='function') salvar(); }catch(e){} location.href=url; }   // janela bloqueada: vai e volta (o projeto fica salvo)
+const ATOS_IDA='plantare.atos.ida', ATOS_ERRO='plantare.atos.erro';
+async function pixPost(caminho, corpo){
+  const r=await fetch(pixApi()+caminho, {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(corpo||{})});
+  let j=null; try{ j=await r.json(); }catch(e){}
+  if(!r.ok || !j || !j.ok) throw new Error((j&&j.motivo)||'Não foi possível entrar agora.');
+  return j;
 }
-async function enviarLinkEmail(email){ await sbAuth('otp?redirect_to='+encodeURIComponent(contaVolta()), {email, create_user:true}); }
-async function confirmarCodigoEmail(email, codigo){ contaGravar(sessaoDe(await sbAuth('verify',{type:'email', email, token:codigo}))); }
+/* abre a Atos numa janela (o app e o pagamento ficam como estão); janela bloqueada: vai e volta (o projeto fica salvo).
+   A janela abre já no clique, vazia, porque o endereço da Atos só chega depois de falar com o Worker. */
+async function entrarAtos(criarConta){
+  const w=window.open('','plantare_login','width=480,height=720');
+  try{
+    const j=await pixPost('/conta/atos/ida', {volta:contaVolta(), criarConta:!!criarConta});
+    localStorage.setItem(ATOS_IDA, JSON.stringify(j.guardar));
+    if(w && !w.closed){ w.location.href=j.url; return; }
+    try{ if(typeof salvar==='function') salvar(); }catch(e){}
+    location.href=j.url;
+  }catch(e){ if(w) try{ w.close(); }catch(x){} CONTA.erro=e.message; contaAvisar(); }
+}
 async function sairConta(){ const t=CONTA.sessao&&CONTA.sessao.access_token; contaGravar(null); if(t) sbAuth('logout',{},t).catch(()=>{}); }
-/* volta do Google ou do link do e-mail: #access_token=…&refresh_token=… */
+/* volta da Atos: ?code=…&state=…&iss=… (ou ?error=…) */
 (()=>{
-  const h=new URLSearchParams(location.hash.slice(1));
-  if(h.get('access_token')){
-    const s=sessaoDe({access_token:h.get('access_token'), refresh_token:h.get('refresh_token'), expires_in:h.get('expires_in')});
-    contaGravar(s);
-    history.replaceState(null,'',location.pathname+location.search);
-    if(!s.email) fetch(SB_URL+'/auth/v1/user',{headers:{apikey:SB_CHAVE, authorization:'Bearer '+s.access_token}}).then(r=>r.ok?r.json():null)
-      .then(u=>{ if(u&&u.email&&CONTA.sessao&&CONTA.sessao.access_token===s.access_token) contaGravar(Object.assign({},s,{email:String(u.email).toLowerCase()})); }).catch(()=>{});
-    if(window.opener && window.name==='plantare_login'){ try{ window.opener.postMessage({plantareConta:1}, location.origin); }catch(e){} window.close(); }
-  }else if(h.get('error_description')){
-    CONTA.erro=h.get('error_description'); history.replaceState(null,'',location.pathname+location.search);
-  }
+  const u=new URL(location.href);
+  // volta antiga do Google ou do link do e-mail (#access_token=…): não vale mais, só limpa o endereço
+  if(/(^|[#&])(access_token|error_description)=/.test(location.hash)) history.replaceState(null,'',u.pathname+u.search);
+  if(!u.searchParams.has('state') || !(u.searchParams.has('code') || u.searchParams.has('error'))) return;
+  let guardar=null; try{ guardar=JSON.parse(localStorage.getItem(ATOS_IDA)||'null'); localStorage.removeItem(ATOS_IDA); }catch(e){}
+  history.replaceState(null,'',u.pathname+u.hash);   // o código sai da barra de endereço antes de tudo
+  if(!guardar) return;
+  // na janela aberta pelo app: avisa e fecha (sem opener, se a Atos um dia cortar o vínculo, o aviso vai pelo localStorage)
+  const naJanela=window.name==='plantare_login';
+  const fim=erro=>{
+    if(!naJanela){ if(erro){ CONTA.erro=erro; contaAvisar(); } return; }
+    if(window.opener) try{ window.opener.postMessage({plantareConta:1, erro:erro||''}, location.origin); }catch(e){}
+    else if(erro) try{ localStorage.setItem(ATOS_ERRO, erro); }catch(e){}
+    window.close();
+  };
+  pixPost('/conta/atos/volta', {url:u.toString(), guardar})
+    .then(j=>{ contaGravar(Object.assign(sessaoDe(j), {email:String(j.email||'').toLowerCase(), nome:j.nome||''})); fim(''); })
+    .catch(e=>fim(e.message));
 })();
-/* login feito em outra aba ou na janela do Google */
-addEventListener('storage',e=>{ if(e.key===CONTA_CHAVE){ CONTA.sessao=contaLer(); CONTA.compras=null; contaAvisar(); } });
+/* login feito em outra aba ou na janela da Atos */
+addEventListener('storage',e=>{
+  if(e.key===CONTA_CHAVE){ CONTA.sessao=contaLer(); CONTA.compras=null; contaAvisar(); }
+  if(e.key===ATOS_ERRO && e.newValue){ CONTA.erro=e.newValue; try{ localStorage.removeItem(ATOS_ERRO); }catch(x){} contaAvisar(); } });
 /* app instalado (PWA): o login pode terminar em outra janela; ao voltar, relê a sessão */
 document.addEventListener('visibilitychange',()=>{ if(document.visibilityState!=='visible') return;
   const s=contaLer(), a=CONTA.sessao; if((s&&s.access_token)!==(a&&a.access_token)){ CONTA.sessao=s; CONTA.compras=null; contaAvisar(); } });
-addEventListener('message',e=>{ if(e.origin===location.origin && e.data && e.data.plantareConta){ CONTA.sessao=contaLer(); CONTA.compras=null; contaAvisar(); } });
+addEventListener('message',e=>{ if(e.origin===location.origin && e.data && e.data.plantareConta){
+  if(e.data.erro) CONTA.erro=e.data.erro;
+  CONTA.sessao=contaLer(); CONTA.compras=null; contaAvisar(); } });
 
 /* impressão digital do talhão — a mesma conta do Worker (hashTalhao) */
 const AREA_HASH={chave:null, valor:null};
@@ -10160,7 +10182,7 @@ function abrirPagamento(){
   $('#pgEtapaAceite').hidden=false; $('#pgDetalhes').hidden=true; $('#pgDetalhes').inert=true;
   $('#pgPago').hidden=true; $('#pgFechar').disabled=false; $('#pgConcluir').hidden=true; $('#pgConcluir').disabled=false; $('#pgStatus').textContent='';
   $('#pgGerar').disabled=false; $('#pgGerarMsg').textContent=''; $('#pgGerar').textContent='Gerar Pix';
-  $('#pgCodigoBox').hidden=true; $('#pgLoginMsg').textContent=''; $('#pgLoginEmail').value=contaEmail()||(()=>{ try{ return localStorage.getItem('plantare_email')||''; }catch(e){ return ''; } })();
+  $('#pgLoginMsg').textContent='';
   $('#pgEmail').value=(()=>{ try{ return localStorage.getItem('plantare_email')||''; }catch(e){ return ''; } })();
   pgConfigurar();
   entregaConfirmada=false;
@@ -10208,25 +10230,9 @@ CONTA.ouvintes.push(()=>{
     if(PG.modo==='pix' && contaLogada()) contaSincronizar(true).then(pgConferirJaPago); }
   if(E.passo==='arquivos' && typeof atualizarPainel==='function') atualizarPainel();
 });
-$('#pgGoogle').addEventListener('click', entrarGoogle);
-$('#pgEntrarOpc').addEventListener('click', ()=>{ PG.mostrarLogin=true; pgContaTela(); $('#pgGoogle').focus(); });
-$('#pgLoginEnviar').addEventListener('click', async()=>{
-  const email=$('#pgLoginEmail').value.trim();
-  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ $('#pgLoginMsg').textContent='Informe um e-mail válido.'; $('#pgLoginEmail').focus(); return; }
-  $('#pgLoginEnviar').disabled=true; $('#pgLoginMsg').textContent='Enviando…';
-  try{ await enviarLinkEmail(email); try{ localStorage.setItem('plantare_email', email); }catch(e){}
-    $('#pgCodigoBox').hidden=false; $('#pgLoginMsg').textContent='Enviamos um link para '+email+'. Abra neste aparelho (ou digite o código do e-mail, se vier um).'; $('#pgCodigo').focus(); }
-  catch(e){ $('#pgLoginMsg').textContent=e.message; }
-  finally{ setTimeout(()=>$('#pgLoginEnviar').disabled=false, 20000); }
-});
-$('#pgLoginEmail').addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); $('#pgLoginEnviar').click(); } });
-$('#pgCodigoOk').addEventListener('click', async()=>{
-  const cod=$('#pgCodigo').value.replace(/\D/g,''), email=$('#pgLoginEmail').value.trim();
-  if(cod.length<6){ $('#pgLoginMsg').textContent='Digite o código que chegou no e-mail.'; return; }
-  $('#pgLoginMsg').textContent='Conferindo…';
-  try{ await confirmarCodigoEmail(email, cod); $('#pgLoginMsg').textContent=''; }catch(e){ $('#pgLoginMsg').textContent=e.message; }
-});
-$('#pgCodigo').addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); $('#pgCodigoOk').click(); } });
+$('#pgAtos').addEventListener('click', ()=>{ $('#pgLoginMsg').textContent=''; entrarAtos(false); });
+$('#pgAtosCriar').addEventListener('click', ()=>{ $('#pgLoginMsg').textContent=''; entrarAtos(true); });
+$('#pgEntrarOpc').addEventListener('click', ()=>{ PG.mostrarLogin=true; pgContaTela(); $('#pgAtos').focus(); });
 $('#pgSair').addEventListener('click', ()=>{ sairConta(); if(PG.jaPago && !entregaConfirmada){ PG.pedido=null; PG.jaPago=false; PG.modo=pixApi()?'pix':'demo'; pgConfigurar(); } });
 async function pgChamar(rota, corpo){
   const h={}, t=await contaToken(); if(t) h.authorization='Bearer '+t;
@@ -13885,12 +13891,10 @@ function contaDesenhar(op){
   if(tela==='entrar'){
     c.innerHTML=fechar+'<div class="ux-overline">SUA CONTA <span class="ux-dot"></span></div><h2>Entre para guardar seus talhões.</h2>'
       +'<p class="nota">Seus talhões e compras ficam na conta: dá para abrir e baixar de novo em qualquer aparelho.</p>'
-      +'<div class="pg-login"><button type="button" class="btn btn-luz btn-bloco" data-cx="google" data-foco>Entrar com Google</button>'
-      +'<div class="pg-ou"><span>ou pelo e-mail</span></div>'
-      +'<div class="cupom"><input id="cxEmail" type="email" autocomplete="email" inputmode="email" placeholder="voce@fazenda.com.br" aria-label="Seu e-mail"><button class="btn btn-fio" type="button" data-cx="enviar">Enviar código</button></div>'
-      +'<div class="cupom" id="cxCodigoBox" hidden><input id="cxCodigo" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="Código do e-mail" aria-label="Código do e-mail"><button class="btn btn-fio" type="button" data-cx="codigo">Entrar</button></div>'
+      +'<div class="pg-login"><button type="button" class="btn btn-luz btn-bloco" data-cx="atos" data-foco>Entrar com Atos</button>'
+      +'<p class="nota pg-atos-criar">Não tem Conta Atos? <button class="link" type="button" data-cx="atosCriar">Criar conta</button></p>'
+      +'<p class="nota">Já entrava pelo Google ou pelo e-mail? Entre com uma Conta Atos do mesmo e-mail: seus talhões e compras estão lá.</p>'
       +'<p class="cupom-msg" id="cxMsg" role="status"></p></div>';
-    try{ $('#cxEmail').value=localStorage.getItem('plantare_email')||''; }catch(e){}
     if(CONTA.erro){ $('#cxMsg').textContent='Não foi possível entrar: '+CONTA.erro; CONTA.erro=''; }
     return;
   }
@@ -13901,7 +13905,7 @@ function contaDesenhar(op){
       +'<div class="ux-overline">'+(novo?'CADASTRO':'MEUS DADOS')+' <span class="ux-dot"></span></div><h2>'+(novo?'Só falta o seu cadastro.':'Seus dados.')+'</h2>'
       +'<p class="nota">'+(novo?'É rápido: usamos só para emitir a nota fiscal das suas compras.':'Usados na nota fiscal das suas compras.')+'</p>'
       +'<form class="conta-form" id="cxForm" novalidate>'
-      +campo('cxNome','Nome completo','',p.nome,'autocomplete="name" data-foco')
+      +campo('cxNome','Nome completo','',p.nome||(novo&&CONTA.sessao&&CONTA.sessao.nome)||'','autocomplete="name" data-foco')
       +campo('cxCpf','CPF','c3',p.cpf?fmtCpf(p.cpf):'','inputmode="numeric" autocomplete="off" maxlength="14"')
       +campo('cxZap','WhatsApp','c3',p.whatsapp?fmtFone(p.whatsapp):'','inputmode="tel" autocomplete="tel-national" maxlength="15"')
       +campo('cxCep','CEP','c2',p.cep?fmtCep(p.cep):'','inputmode="numeric" autocomplete="postal-code" maxlength="9"')
@@ -13936,7 +13940,7 @@ function contaDesenhar(op){
   if(tela==='opcoes'){
     c.innerHTML=fechar+'<button type="button" class="voltar" data-cx="menu">‹ CONTA</button><div class="ux-overline">OPÇÕES <span class="ux-dot"></span></div><h2>Opções.</h2>'
       +'<section class="conta-perigo"><h3>Excluir conta</h3>'
-      +'<p class="nota">Apaga seu login, seu cadastro, "Meus talhões" e os projetos guardados. As compras pagas continuam registradas, sem ligação com a conta, porque a lei fiscal exige guardar esses dados. <b>Não dá para desfazer.</b></p>'
+      +'<p class="nota">Apaga sua conta do Plantare, seu cadastro, "Meus talhões" e os projetos guardados. As compras pagas continuam registradas, sem ligação com a conta, porque a lei fiscal exige guardar esses dados. A Conta Atos não é apagada: ela é da Atos (atos.dev.br › Minha conta). <b>Não dá para desfazer.</b></p>'
       +'<label class="campo" for="cxExcluir">Digite EXCLUIR para confirmar<input id="cxExcluir" autocomplete="off" spellcheck="false" data-foco></label>'
       +'<button type="button" class="btn btn-perigo" data-cx="excluirConta" disabled>Excluir minha conta</button>'
       +'<p class="cupom-msg" id="cxMsg" role="status"></p></section>';
@@ -13983,24 +13987,7 @@ async function contaBuscarCep(cep){
 async function contaAcao(a, alvo){
   if(a==='fechar') return contaFechar();
   if(a==='menu'){ CX.tela='menu'; $('#contaCard').classList.remove('largo'); contaDesenhar(); Promise.all([contaTalhoes().catch(()=>null), contaCompras().catch(()=>null)]).then(()=>{ if(CX.tela==='menu') contaDesenhar(); }); return; }
-  if(a==='google') return entrarGoogle();
-  if(a==='enviar'){
-    const email=$('#cxEmail').value.trim();
-    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ $('#cxMsg').textContent='Informe um e-mail válido.'; $('#cxEmail').focus(); return; }
-    alvo.disabled=true; $('#cxMsg').textContent='Enviando…';
-    try{ await enviarLinkEmail(email); try{ localStorage.setItem('plantare_email', email); }catch(e){}
-      $('#cxCodigoBox').hidden=false; $('#cxMsg').textContent='Enviamos um código para '+email+'. Digite aqui (ou abra o link do e-mail neste aparelho).'; $('#cxCodigo').focus(); }
-    catch(e){ $('#cxMsg').textContent=e.message; }
-    finally{ setTimeout(()=>{ alvo.disabled=false; }, 20000); }
-    return;
-  }
-  if(a==='codigo'){
-    const cod=soDig($('#cxCodigo').value), email=$('#cxEmail').value.trim();
-    if(cod.length<6){ $('#cxMsg').textContent='Digite o código que chegou no e-mail.'; return; }
-    $('#cxMsg').textContent='Conferindo…';
-    try{ await confirmarCodigoEmail(email, cod); }catch(e){ $('#cxMsg').textContent=e.message; }
-    return;
-  }
+  if(a==='atos' || a==='atosCriar'){ $('#cxMsg').textContent=''; return entrarAtos(a==='atosCriar'); }
   if(a==='depois') return contaFechar();
   if(a==='salvarPerfil'){
     alvo=alvo||$('#contaCard [data-cx=salvarPerfil]');
@@ -14048,8 +14035,6 @@ async function contaAcao(a, alvo){
   if(a==='talhoes'){ contaFechar(); contaMostrarTalhoes(); return; }
 }
 $('#contaCard').addEventListener('click',e=>{ const b=e.target.closest('[data-cx]'); if(b) contaAcao(b.dataset.cx, b); });
-$('#contaCard').addEventListener('keydown',e=>{ if(e.key==='Enter' && e.target.id==='cxEmail'){ e.preventDefault(); contaAcao('enviar', $('#contaCard [data-cx=enviar]')); }
-  if(e.key==='Enter' && e.target.id==='cxCodigo'){ e.preventDefault(); contaAcao('codigo'); } });
 $('#contaCard').addEventListener('close',()=>{ $('#contaAv').setAttribute('aria-expanded','false'); CX.tela=null; document.body.classList.remove('conta-aberta'); });
 $('#contaAv').addEventListener('click',()=>{ if($('#contaCard').open) contaFechar(); else contaAbrir(); });
 /* clique fora fecha o card (quando não é modal) */
@@ -14059,7 +14044,7 @@ document.addEventListener('pointerdown',e=>{ const d=$('#contaCard'); if(!d.open
 CONTA.ouvintes.push(()=>{
   CX.perfil=undefined; CX.talhoes=null; CX.compras=null; CX.ultimo='';
   contaAvatar();
-  if(!contaLogada()){ if(CX.mapa) contaSairMapa(); if($('#contaCard').open && CX.tela!=='entrar'){ CX.tela='entrar'; contaDesenhar(); } return; }
+  if(!contaLogada()){ if(CX.mapa) contaSairMapa(); if($('#contaCard').open && (CX.tela!=='entrar' || CONTA.erro)){ CX.tela='entrar'; contaDesenhar(); } return; }
   contaPerfil().then(p=>{ contaAvatar(); const d=$('#contaCard');
     if(d.open && CX.tela==='entrar'){ CX.tela=p?'menu':'cadastro'; contaDesenhar(); } }).catch(()=>{});
   if(E.kml && E.polysLL) contaTalhaoAgendar();   // entrou com um talhão aberto: ele já vai para a conta

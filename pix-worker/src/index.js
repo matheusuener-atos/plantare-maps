@@ -9,11 +9,13 @@
      GET  /status/:id     → pago ou não (e registra se pagou)     conta ou chave (x-plantare-acesso)
      POST /pacote         → gera os arquivos pagos                conta ou chave {pedido, entrada, acesso?}
      POST /webhook        → aviso do Mercado Pago (x-signature)   assinatura
+     POST /conta/atos/ida   → começa o "Entrar com Atos"          não        {volta, criarConta?}
+     POST /conta/atos/volta → confere a volta, abre a sessão      não        {url, guardar}
 
    Segredos (npx wrangler secret put …): MP_ACCESS_TOKEN, MP_WEBHOOK_SECRET, SUPABASE_SERVICE_KEY
    Segredo opcional:                    AVISO_EMAIL (recebe a cópia de cada cortesia)
    Variáveis ([vars] no wrangler.toml):  ORIGENS, SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, EXPIRA, REBAIXAR_DIAS, EMAIL_DE,
-                                         PAGADOR_TESTE (só em teste: "APRO")
+                                         ATOS_CLIENT_ID, ATOS_VOLTA, PAGADOR_TESTE (só em teste: "APRO")
    E-mail (binding EMAIL, Cloudflare Email Service); se falhar, o download não trava
 
    Regras
@@ -25,6 +27,7 @@
      · tokens e chaves só como segredo do Worker. */
 import { calcularPreco, areaPoligonos, PRECO, NOMES_CAMADAS } from './preco.js';
 import { gerarPacote } from './exportar.js';
+import { entrarComAtos } from '@atos.dev.br/entrar';
 
 const MP = 'https://api.mercadopago.com';
 const json = (obj, status, extra) => new Response(JSON.stringify(obj), { status: status || 200, headers: Object.assign({ 'content-type': 'application/json; charset=utf-8' }, extra || {}) });
@@ -302,6 +305,69 @@ async function excluirConta(body, env, user) {
   return json({ ok: true });
 }
 
+/* ---------------- Conta Atos ----------------
+   O login é a Conta Atos (OpenID Connect com PKCE, pelo @atos.dev.br/entrar). Daqui sai a ida (state, nonce e
+   code_verifier, que o navegador guarda) e, na volta, a troca do código e a conferência do id_token. Depois
+   abre uma sessão do Supabase da mesma pessoa: perfis, talhões, projetos e compras seguem no RLS de sempre.
+   A pessoa é ligada pelo sub da Atos (tabela contas_atos); na primeira entrada, pelo e-mail confirmado, e
+   quem já tinha conta (Google ou código por e-mail) encontra tudo. */
+function atosPronto(env) { return !!(env.ATOS_CLIENT_ID && env.ATOS_VOLTA && bancoPronto(env)); }
+/* a volta é a página do app; mais de uma (ex.: teste local) vai separada por vírgula, todas cadastradas na Atos */
+function clienteAtos(env, volta) {
+  const voltas = String(env.ATOS_VOLTA).split(',').map(s => s.trim()).filter(Boolean);
+  return entrarComAtos({ clientId: env.ATOS_CLIENT_ID, voltaPara: voltas.includes(volta) ? volta : voltas[0], emissor: env.ATOS_EMISSOR || undefined, fetch: (u, o) => fetch(u, o) });
+}
+async function atosIda(body, env) {
+  const { url, guardar } = await clienteAtos(env, body && body.volta).comecar({ criarConta: !!(body && body.criarConta) });
+  return json({ ok: true, url, guardar });
+}
+/* Auth do Supabase com a chave secreta */
+function sbAuthAdmin(env, caminho, corpo, metodo) {
+  const k = env.SUPABASE_SERVICE_KEY, h = { apikey: k, 'content-type': 'application/json', accept: 'application/json' };
+  if (/^eyJ/.test(k)) h.authorization = 'Bearer ' + k;
+  return fetch(env.SUPABASE_URL + '/auth/v1/' + caminho, { method: metodo || 'POST', headers: h, body: corpo ? JSON.stringify(corpo) : undefined });
+}
+async function ligarAtos(env, sub, email) {
+  try { return await rpc(env, 'plantare_conta_atos', { p_sub: sub, p_email: email }); }
+  catch (e) {
+    if (/outra Conta Atos/.test(e.message)) throw new Falha('A conta do Plantare com o e-mail ' + email + ' já está ligada a outra Conta Atos.', 409);
+    throw e;
+  }
+}
+async function atosVolta(body, env) {
+  let p;
+  try { p = await clienteAtos(env, body && body.guardar && body.guardar.voltaPara).concluir(String((body && body.url) || ''), body && body.guardar); }
+  catch (e) {
+    if (e && e.name === 'ErroAtos') throw new Falha(e.message, e.codigo === 'access_denied' ? 403 : e.codigo === 'rede' || e.codigo === 'descoberta' ? 502 : 400);
+    throw e;
+  }
+  if (!p.email || !p.emailVerificado) throw new Falha('O e-mail da sua Conta Atos ainda não foi confirmado. Confirme na Atos e entre de novo.', 403);
+  const email = p.email.toLowerCase();
+  let uid = await ligarAtos(env, p.id, email);
+  if (!uid) {
+    const r = await sbAuthAdmin(env, 'admin/users', { email, email_confirm: true, app_metadata: { provider: 'atos', atos_sub: p.id }, user_metadata: { nome: p.nome } });
+    if (!r.ok && r.status !== 422) throw new Falha('Não foi possível abrir a sua conta agora. Tente de novo.', 502);   // 422: outra entrada criou ao mesmo tempo
+    uid = await ligarAtos(env, p.id, email);
+    if (!uid) throw new Falha('Não foi possível abrir a sua conta agora. Tente de novo.', 502);
+  }
+  // o e-mail mudou na Atos: acompanha (se outra conta do Plantare já usa o novo, fica o antigo)
+  const ru = await sbAuthAdmin(env, 'admin/users/' + q(uid), null, 'GET');
+  const u = ru.ok ? await ru.json().catch(() => null) : null;
+  if (!u || !u.email) throw new Falha('Não foi possível abrir a sua conta agora. Tente de novo.', 502);
+  let emailConta = String(u.email).toLowerCase();
+  if (emailConta !== email && (await sbAuthAdmin(env, 'admin/users/' + q(uid), { email, email_confirm: true }, 'PUT')).ok) emailConta = email;
+  // a sessão: um link de entrada gerado aqui (nenhum e-mail sai) e conferido na hora
+  const rl = await sbAuthAdmin(env, 'admin/generate_link', { type: 'magiclink', email: emailConta });
+  const l = rl.ok ? await rl.json().catch(() => null) : null;
+  const hash = l && (l.hashed_token || (l.properties && l.properties.hashed_token));
+  if (!hash) throw new Falha('Não foi possível abrir a sua conta agora. Tente de novo.', 502);
+  const rs = await fetch(env.SUPABASE_URL + '/auth/v1/verify', { method: 'POST', headers: { apikey: env.SUPABASE_PUBLISHABLE_KEY || env.SUPABASE_SERVICE_KEY, 'content-type': 'application/json' },
+    body: JSON.stringify({ type: 'magiclink', token_hash: hash }) });
+  const s = rs.ok ? await rs.json().catch(() => null) : null;
+  if (!s || !s.access_token || !s.refresh_token) throw new Falha('Não foi possível abrir a sua conta agora. Tente de novo.', 502);
+  return json({ ok: true, access_token: s.access_token, refresh_token: s.refresh_token, expires_in: s.expires_in, email: emailConta, nome: p.nome || '' });
+}
+
 /* ---------------- entrega ---------------- */
 const b64 = u8 => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); };
 async function entregar(body, env, user) {
@@ -371,6 +437,11 @@ export default {
         return json(Object.assign({ ok: true }, await orcar(await req.json(), env, user)), 200, c.headers);
       }
       if (rota === '/eu' && req.method === 'GET') return com(await minhasCompras(env, await exigirUsuario(req, env)));
+      if ((rota === '/conta/atos/ida' || rota === '/conta/atos/volta') && req.method === 'POST') {
+        if (!atosPronto(env)) throw new Falha('O login pela Conta Atos ainda não está configurado.', 503);
+        const body = await req.json().catch(() => ({}));
+        return com(rota === '/conta/atos/ida' ? await atosIda(body, env) : await atosVolta(body, env));
+      }
       if (rota === '/conta/excluir' && req.method === 'POST') { const u = await exigirUsuario(req, env); return com(await excluirConta(await req.json().catch(() => ({})), env, u)); }
       // Pix e download: com conta ou sem (sem conta vale a chave de acesso guardada no navegador)
       if (rota === '/cobranca' && req.method === 'POST') { const u = await usuario(req, env); return com(await criarCobranca(await req.json(), env, u)); }

@@ -17,6 +17,13 @@ ORIGENS = "https://plantaremaps.com.br,https://www.plantaremaps.com.br,https://p
 # Banco e login (Supabase). A URL e a chave publicável não são segredo: a publicável também vai no app.
 SUPABASE_URL = "https://yhzyfcdfpezgtnrrslqv.supabase.co"
 SUPABASE_PUBLISHABLE_KEY = "sb_publishable_avQLpdS9TwtNE9PKu-1E5w_xLI7OzR5"
+# Login pela Conta Atos (atos.dev.br › Workspace › Integrações). Vazio = login desligado (as rotas /conta/atos respondem 503).
+# ATOS_CLIENT_ID: o client_id do acesso. ATOS_VOLTA: o endereço de retorno, exatamente como cadastrado
+# (mais de um, separados por vírgula, todos cadastrados; o primeiro é o padrão).
+# Acesso do tipo "servidor" (com segredo): acrescente  compatibility_flags = ["nodejs_compat"]  no topo e
+#   npx wrangler secret put ATOS_CLIENT_SECRET   (a biblioteca lê de process.env). Acesso "público" não usa segredo.
+ATOS_CLIENT_ID = ""
+ATOS_VOLTA = "https://plantaremaps.com.br/"
 # Cupons agora ficam na tabela "cupons" do Supabase (um uso por conta). O segredo CUPONS antigo não é mais lido.
 # Por quantos dias uma compra paga pode ser baixada de novo (mesmo talhão, mesmas camadas). 0 = sem limite.
 REBAIXAR_DIAS = "365"

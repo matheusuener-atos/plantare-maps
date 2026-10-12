@@ -290,6 +290,67 @@ await t('excluir conta: apaga login, cadastro, talhões e projetos; guarda a com
   // a outra conta não é tocada
   assert.equal(F.perfis.filter(p => p.user_id === 'u-ana').length, 1); assert.equal(F.talhoes.filter(p => p.user_id === 'u-ana').length, 1); assert.equal(F.arquivos['u-ana/bbb.json.gz'], 1);
   assert.equal((await chama('/eu', null, ANA)).st, 200); });
+// ---------- Entrar com Atos ----------
+const VOLTA = 'https://plantaremaps.com.br/';
+/* ida no Worker → a Atos (falsa) autoriza → volta no Worker; o.guardar mexe no que o navegador guardou */
+const entrarAtos = async (pessoa, o) => { o = o || {};
+  const ida = await chama('/conta/atos/ida', { volta: o.volta || VOLTA, criarConta: o.criarConta });
+  assert.equal(ida.st, 200, JSON.stringify(ida.j));
+  const url = F.atosAutorizar(ida.j.url, pessoa, o), guardar = o.guardar ? o.guardar(ida.j.guardar) : ida.j.guardar;
+  return { ida, url, guardar, volta: await chama('/conta/atos/volta', { url, guardar }) }; };
+await t('Atos: sem ATOS_CLIENT_ID as rotas respondem 503', async () => {
+  const semAtos = Object.assign({}, env, { ATOS_CLIENT_ID: '' });
+  for (const r of ['/conta/atos/ida', '/conta/atos/volta']) assert.equal((await worker.fetch(req(r, {}), semAtos)).status, 503, r); });
+await t('Atos: origem estranha é barrada', async () => { assert.equal((await chama('/conta/atos/ida', { volta: VOLTA }, { orig: 'https://golpe.com' })).st, 403); });
+await t('Atos: a ida leva PKCE S256, state, nonce e a volta cadastrada', async () => {
+  const { j } = await chama('/conta/atos/ida', { volta: VOLTA }); const p = new URL(j.url).searchParams;
+  assert.ok(j.url.startsWith('https://atos.teste/entrar?')); assert.equal(p.get('client_id'), 'u-plantare-teste'); assert.equal(p.get('redirect_uri'), VOLTA);
+  assert.equal(p.get('code_challenge_method'), 'S256'); assert.match(p.get('code_challenge'), /^[\w-]{43}$/); assert.equal(p.get('scope'), 'openid email profile');
+  assert.equal(p.get('state'), j.guardar.state); assert.equal(p.get('nonce'), j.guardar.nonce); assert.equal(p.get('prompt'), null);
+  assert.equal(new URL((await chama('/conta/atos/ida', { volta: 'http://localhost:8787/' })).j.url).searchParams.get('redirect_uri'), 'http://localhost:8787/');
+  assert.equal(new URL((await chama('/conta/atos/ida', { volta: 'https://golpe.com/' })).j.url).searchParams.get('redirect_uri'), VOLTA);   // volta fora da lista: a padrão
+  assert.equal(new URL((await chama('/conta/atos/ida', { volta: VOLTA, criarConta: true })).j.url).searchParams.get('prompt'), 'create'); });
+await t('Atos: quem já tinha conta (Google ou e-mail) cai na mesma, com as compras', async () => {
+  const { volta } = await entrarAtos({ sub: 'atos-ana', email: 'Ana@Fazenda.com.br', name: 'Ana Souza' });
+  assert.equal(volta.st, 200, JSON.stringify(volta.j)); assert.equal(volta.j.email, 'ana@fazenda.com.br'); assert.equal(volta.j.nome, 'Ana Souza'); assert.ok(volta.j.refresh_token);
+  assert.equal(F.contasAtos['atos-ana'], 'u-ana');
+  const eu = await chama('/eu', null, { token: volta.j.access_token }); assert.equal(eu.st, 200); assert.ok(eu.j.compras.some(c => c.id === pedido1)); });
+await t('Atos: a entrada seguinte vai pelo sub, e o e-mail trocado na Atos acompanha', async () => {
+  const { volta } = await entrarAtos({ sub: 'atos-ana', email: 'ana.nova@fazenda.com.br' });
+  assert.equal(volta.st, 200, JSON.stringify(volta.j)); assert.equal(volta.j.email, 'ana.nova@fazenda.com.br');
+  assert.equal(F.tokens[volta.j.access_token].id, 'u-ana'); assert.equal(F.usuarios.find(u => u.id === 'u-ana').email, 'ana.nova@fazenda.com.br'); });
+await t('Atos: e-mail de uma conta já ligada a outra Conta Atos → 409, sem tocar nela', async () => {
+  const { volta } = await entrarAtos({ sub: 'atos-intruso', email: 'ana.nova@fazenda.com.br' });
+  assert.equal(volta.st, 409); assert.match(volta.j.motivo, /outra Conta Atos/); assert.equal(F.contasAtos['atos-intruso'], undefined); });
+let caio;
+await t('Atos: pessoa nova ganha uma conta do Plantare', async () => { const n = F.usuarios.length;
+  const { volta } = await entrarAtos({ sub: 'atos-caio', email: 'caio@sitio.com', name: 'Caio' });
+  assert.equal(volta.st, 200, JSON.stringify(volta.j)); assert.equal(F.usuarios.length, n + 1); caio = F.contasAtos['atos-caio'];
+  assert.equal(F.usuarios.find(u => u.id === caio).email, 'caio@sitio.com'); assert.equal(F.usuarios.find(u => u.id === caio).app_metadata.atos_sub, 'atos-caio');
+  assert.deepEqual((await chama('/eu', null, { token: volta.j.access_token })).j.compras, []); });
+await t('Atos: state trocado é recusado e nada é criado', async () => { const n = F.usuarios.length;
+  const { volta } = await entrarAtos({ sub: 'atos-dora', email: 'dora@sitio.com' }, { guardar: g => Object.assign({}, g, { state: 'outro-state-qualquer-1234' }) });
+  assert.equal(volta.st, 400); assert.match(volta.j.motivo, /state/); assert.equal(F.usuarios.length, n); });
+await t('Atos: o mesmo código não vale duas vezes', async () => {
+  const r = await entrarAtos({ sub: 'atos-caio', email: 'caio@sitio.com' }); assert.equal(r.volta.st, 200);
+  const de_novo = await chama('/conta/atos/volta', { url: r.url, guardar: r.guardar }); assert.equal(de_novo.st, 400); assert.match(de_novo.j.motivo, /venceu|usado/); });
+await t('Atos: id_token assinado por outra chave é recusado', async () => {
+  const { volta } = await entrarAtos({ sub: 'atos-eva', email: 'eva@sitio.com' }, { forjar: true });
+  assert.equal(volta.st, 400); assert.match(volta.j.motivo, /assinatura/); assert.equal(F.contasAtos['atos-eva'], undefined); });
+await t('Atos: e-mail não confirmado na Atos → 403', async () => {
+  const { volta } = await entrarAtos({ sub: 'atos-fabio', email: 'fabio@sitio.com', email_verified: false });
+  assert.equal(volta.st, 403); assert.match(volta.j.motivo, /confirmado/); assert.equal(F.contasAtos['atos-fabio'], undefined); });
+await t('Atos: conta sem acesso ao aplicativo volta com a mensagem da Atos', async () => {
+  const { volta } = await entrarAtos({ erro: 'access_denied' }); assert.equal(volta.st, 403); assert.match(volta.j.motivo, /não tem acesso/); });
+await t('Atos: acesso confidencial manda o segredo (client_secret_basic)', async () => {
+  F.atosConfidencial = 's3gredo-do-teste'; process.env.ATOS_CLIENT_SECRET = 's3gredo-do-teste';
+  try { assert.equal((await entrarAtos({ sub: 'atos-caio', email: 'caio@sitio.com' })).volta.st, 200);
+    process.env.ATOS_CLIENT_SECRET = 'outro'; assert.equal((await entrarAtos({ sub: 'atos-caio', email: 'caio@sitio.com' })).volta.st, 400); }
+  finally { F.atosConfidencial = null; delete process.env.ATOS_CLIENT_SECRET; } });
+await t('Atos: excluir a conta desfaz a ligação; entrar de novo abre uma conta nova', async () => {
+  const tok = (await entrarAtos({ sub: 'atos-caio', email: 'caio@sitio.com' })).volta.j.access_token;
+  assert.equal((await chama('/conta/excluir', { confirmar: 'EXCLUIR' }, { token: tok })).st, 200); assert.equal(F.contasAtos['atos-caio'], undefined);
+  const { volta } = await entrarAtos({ sub: 'atos-caio', email: 'caio@sitio.com' }); assert.equal(volta.st, 200); assert.notEqual(F.contasAtos['atos-caio'], caio); });
 // ---------- webhook ----------
 const assinar = async (id, rid, ts) => { const man = 'id:' + id.toLowerCase() + ';request-id:' + rid + ';ts:' + ts + ';';
   const k = await crypto.subtle.importKey('raw', new TextEncoder().encode('segredo'), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
