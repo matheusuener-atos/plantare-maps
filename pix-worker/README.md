@@ -1,5 +1,9 @@
 # Plantare · serviço de conta, pagamento e entrega
 
+> A cobrança direta descrita aqui é a implementação atual. A integração
+> central com a Atos está no [plano de adaptação](../docs/COBRANCA-ATOS.md),
+> ainda sem migração de pagamentos ou mudança de rotas em produção.
+
 Cloudflare Worker que guarda as contas do Plantare Maps, cobra os arquivos por Pix (Mercado Pago, Orders API) e **gera os arquivos pagos** (KML, KMZ, AB, rota, Shapefile, GeoJSON, CSV).
 O app não tem mais esse gerador: depois do pagamento, ele manda o plano para `/pacote` e recebe os arquivos prontos, carimbados com a conta e o pedido.
 Relatório PDF, imagem PNG e projeto JSON continuam grátis e saem do próprio navegador.
