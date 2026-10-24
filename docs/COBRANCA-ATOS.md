@@ -57,6 +57,22 @@ As novas rotas, flags e tabelas ainda precisam ser implementadas. A Atos
 atual resolve ofertas fixas e um retrato de direito por produto; sua consulta
 de direitos não é a lista autoritativa de compras de talhões.
 
+## Ideia futura: checkout da Atos dentro da experiência do Plantare
+
+Pedido do dono, registrado em 24/10/2026: considerar usar uma versão do
+checkout de `atos.dev.br` em **janela pop-up** ou **incorporada/injetada no
+Plantare**, para manter a continuidade da experiência de compra.
+
+A ideia será avaliada na entrega M2 de checkout, incluindo comportamento em
+celular, login, bloqueio de pop-up e compatibilidade de uma versão incorporada.
+Não está implementada nem obriga a entrega de ambas as opções. A cobrança e
+o perfil fiscal continuam na Atos; o Plantare apresenta e acompanha a compra.
+
+Definir a forma de incorporação antes de alterar proteções de enquadramento
+ou compartilhar componentes. Manter retorno por página/aba como alternativa.
+O retorno da janela e mensagens da interface não liberam arquivos: confirmar
+o direito pelo servidor conforme o contrato central.
+
 ## Cupons, migração e reversão
 
 - O orçamento monetário e os cupons novos passam à Atos, com tarifa
