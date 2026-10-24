@@ -7,6 +7,8 @@ O contrato entre os serviços ficará em `docs/PLANTARE-COBRANCA.md` no
 repositório `matheusuener-atos/atos.dev.br`, na entrega coordenada deste
 plano. Esse documento é a referência para payloads, eventos e autoridade
 monetária; esta página detalha a adaptação local.
+Veja o [PR do contrato central](https://github.com/matheusuener-atos/atos.dev.br/pull/6)
+para ler a proposta antes da integração na main.
 
 ## Comportamento atual a preservar
 
