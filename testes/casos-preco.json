@@ -1,0 +1,17 @@
+[
+  { "nome": "todas as camadas", "ha": 93.5, "camadas": ["linhas_ab", "bordadura", "percurso", "manobras"], "total": 935 },
+  { "nome": "mínimo por hectare", "ha": 18.7, "camadas": ["linhas_ab"], "total": 112.2 },
+  { "nome": "camadas para monitor", "ha": 18.7, "camadas": ["linhas_ab", "bordadura", "percurso"], "total": 168.3 },
+  { "nome": "limite da primeira faixa", "ha": 300, "camadas": ["linhas_ab", "bordadura", "percurso", "manobras"], "total": 3000 },
+  { "nome": "entrada na segunda faixa", "ha": 300.01, "camadas": ["linhas_ab", "bordadura", "percurso", "manobras"], "total": 3000.08 },
+  { "nome": "desconto só na área excedente", "ha": 575, "camadas": ["linhas_ab", "bordadura", "percurso", "manobras"], "total": 5200 },
+  { "nome": "limite da segunda faixa", "ha": 600, "camadas": ["linhas_ab", "bordadura", "percurso", "manobras"], "total": 5400 },
+  { "nome": "limite da terceira faixa", "ha": 1000, "camadas": ["linhas_ab", "bordadura", "percurso", "manobras"], "total": 8200 },
+  { "nome": "quarta faixa", "ha": 1200, "camadas": ["linhas_ab", "bordadura", "percurso", "manobras"], "total": 9400 },
+  { "nome": "cupom percentual", "ha": 100, "camadas": ["linhas_ab", "bordadura", "percurso", "manobras"], "cupom": 0.1, "total": 900 },
+  { "nome": "cupom fixo", "ha": 100, "camadas": ["linhas_ab"], "cupom": { "fixo": 2 }, "total": 2 },
+  { "nome": "fixo não encarece a compra", "ha": 10, "camadas": ["linhas_ab"], "cupom": { "fixo": 500 }, "total": 60 },
+  { "nome": "cortesia", "ha": 100, "camadas": ["linhas_ab"], "cupom": { "gratis": true }, "total": 0 },
+  { "nome": "sem camadas pagas", "ha": 100, "camadas": [], "total": 0 },
+  { "nome": "camadas repetidas não duplicam a cobrança", "ha": 10, "camadas": ["linhas_ab", "linhas_ab"], "total": 60 }
+]
