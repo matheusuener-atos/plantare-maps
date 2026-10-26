@@ -37,6 +37,7 @@ import { calcularPreco, areaPoligonos, PRECO, NOMES_CAMADAS } from './preco.js';
 import { gerarPacote } from './exportar.js';
 import { entrarComAtos } from '@atos.dev.br/entrar';
 import { dados } from './dados.js';
+import { FalhaAtos, novasAtos, integraAtos, criarIntencao, compraAtual, direito, listarAtos, listarCompras, receberEvento, impedirPixDuplicado } from './atos-compras.js';
 
 const MP = 'https://api.mercadopago.com';
 const json = (obj, status, extra) => new Response(JSON.stringify(obj), { status: status || 200, headers: Object.assign({ 'content-type': 'application/json; charset=utf-8' }, extra || {}) });
@@ -159,6 +160,7 @@ async function mpCancelar(id, env) {
 }
 
 async function criarCobranca(body, env, user) {
+  await impedirPixDuplicado(env, user, validarPolys(body.polys) ? '' : await hashTalhao(body.polys));
   if (!user && !EMAIL_OK(emailDe(body, null))) throw new Falha('Informe um e-mail válido para o comprovante.');
   const o = await orcar(body, env, user), p = o.preco;
   if (o.cupom && !o.cupom.valido) throw new Falha(o.cupom.motivo || 'Cupom inválido.');
@@ -211,6 +213,7 @@ async function enviarEmail(env, msg) {
 /* Cupom de cortesia: conferido aqui, sem Mercado Pago. Vira uma compra paga de R$ 0,00 (é ela que libera
    os arquivos em /pacote), da conta ou, sem conta, presa a uma chave de acesso; recibo e cópia para AVISO_EMAIL. */
 async function cortesia(body, env, user) {
+  await impedirPixDuplicado(env, user, validarPolys(body.polys) ? '' : await hashTalhao(body.polys));
   if (!bancoPronto(env)) throw new Falha('Serviço sem banco configurado.', 503);
   const email = emailDe(body, user);
   if (!user && !EMAIL_OK(email)) throw new Falha('Informe um e-mail válido para receber o recibo.');
@@ -261,6 +264,12 @@ async function atualizarCompra(env, c) {
   return Object.assign({}, c, { order: d });
 }
 async function consultar(id, env, user, acesso) {
+  if (String(id).startsWith('cmp-')) {
+    const c = await compraAtual(env,user,id);
+    return json({ok:true,id:c.id,pago:direito(c),encerrado:['devolvida','cancelada','expirada'].includes(c.estado),
+      status:c.estado,plano:c.plano,camadas:c.camadas,ha:c.area_cent_ha/100,valor:c.centavos/100,area:c.area_hash,
+      baixar_ate:c.baixar_ate,provedor:'atos',versao:c.versao},200,{'cache-control':'no-store'});
+  }
   const c = await atualizarCompra(env, await compraDa(env, id, user, acesso)), pago = c.status === 'pago';
   return json(Object.assign({ ok: true, id: c.id, pago, encerrado: ['expirado', 'cancelado'].includes(c.status), status: c.status,
     plano: c.plano, camadas: c.camadas, ha: +c.ha, valor: +c.valor, area: c.area_hash }, !pago && c.order ? dadosPix(c.order) : {}));
@@ -401,18 +410,29 @@ const b64 = u8 => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s +=
 async function entregar(body, env, user) {
   const e = body && body.entrada;
   if (!e || validarPolys(e.polys)) throw new Falha('Plano inválido.');
-  const c = await atualizarCompra(env, await compraDa(env, body.pedido, user, body.acesso));
+  let c;
+  const central = String(body.pedido || '').startsWith('cmp-');
+  if (central) {
+    const s = await compraAtual(env,user,body.pedido);
+    if (!direito(s)) throw new Falha('Esta compra não tem direito de download ativo.',403);
+    if (e.camadas !== undefined && (!Array.isArray(e.camadas) || e.camadas.some(k => !s.camadas.includes(k))))
+      throw new Falha('Camadas fora do escopo da compra.',403);
+    c = {...s,status:'pago',email:user.email,ha:s.area_cent_ha/100,valor:s.centavos/100};
+  } else c = await atualizarCompra(env, await compraDa(env, body.pedido, user, body.acesso));
   if (c.status !== 'pago') throw new Falha('Pagamento ainda não confirmado.', 402);
   if (await hashTalhao(e.polys) !== c.area_hash) throw new Falha('Este pagamento é de outro talhão.', 403);
   const dias = +(env.REBAIXAR_DIAS || 365);
-  if (dias > 0 && c.pago_em && Date.now() - Date.parse(c.pago_em) > dias * 864e5) throw new Falha('Esta compra tem mais de ' + dias + ' dias. Gere um novo Pix para baixar de novo.', 403);
+  if (!central && dias > 0 && c.pago_em && Date.now() - Date.parse(c.pago_em) > dias * 864e5) throw new Falha('Esta compra tem mais de ' + dias + ' dias. Gere um novo Pix para baixar de novo.', 403);
   const quando = new Date().toISOString().slice(0, 10);
   const texto = 'Licenciado a ' + (user ? user.email : c.email) + ' · pedido ' + c.id + ' · plano #' + c.plano + ' · ' + quando + ' · Plantare Maps';
   let r;
   try { r = gerarPacote(e, { camadas: c.camadas, texto }); } catch (err) { throw new Falha(err.message || 'Plano inválido.'); }
   const enc = new TextEncoder();
   r.arquivos.push({ name: 'LICENCA.txt', data: enc.encode(texto.replace(/ · /g, '\r\n') + '\r\nCamadas: ' + c.camadas.map(k => NOMES_CAMADAS[k] || k).join(', ') + '\r\n') });
-  try { await dados(env).compraBaixada(c.id, (c.downloads || 0) + 1); } catch (err) { /* contador não impede a entrega */ }
+  try {
+    if (central) await env.DB.prepare('update atos_compras set downloads=downloads+1,ultimo_download=? where id=?').bind(new Date().toISOString(),c.id).run();
+    else await dados(env).compraBaixada(c.id, (c.downloads || 0) + 1);
+  } catch (err) { /* contador não impede a entrega */ }
   return json({ ok: true, pedido: c.id, camadas: c.camadas, negados: r.negados, costura: r.costura, arquivos: r.arquivos.map(a => ({ name: a.name, b64: b64(a.data) })) });
 }
 
@@ -448,6 +468,10 @@ async function avisoRecebido(req, url, env) {
 export default {
   async fetch(req, env) {
     const url = new URL(req.url), rota = url.pathname.replace(/\/+$/, '') || '/';
+    if (rota === '/api/atos/eventos' && req.method === 'POST') {
+      try { return json(await receberEvento(req,env),200,{'cache-control':'no-store'}); }
+      catch (e) { return json({ok:false,motivo:e instanceof FalhaAtos ? e.message : 'Evento não persistido; tente novamente.'},e instanceof FalhaAtos ? e.status : 503,{'cache-control':'no-store'}); }
+    }
     if (rota === '/webhook' && req.method === 'POST') {
       // o Mercado Pago não manda Origin: aqui vale só a assinatura
       if (!(await assinaturaValida(req, url, env.MP_WEBHOOK_SECRET))) return new Response('assinatura inválida', { status: 401 });
@@ -460,15 +484,39 @@ export default {
     }
     const c = cors(req, env);
     if (req.method === 'OPTIONS') return new Response(null, { status: c.permitida ? 204 : 403, headers: c.headers });
-    if (rota === '/saude') return json({ ok: true, servico: 'plantare-pix', banco: bancoPronto(env), tabela: PRECO.camadas, minimoHa: PRECO.minimoHa }, 200, c.headers);
+    if (rota === '/saude') return json({ ok: true, servico: 'plantare-pix', banco: bancoPronto(env), tabela: PRECO.camadas, minimoHa: PRECO.minimoHa, checkout_atos:novasAtos(env) }, 200, c.headers);
     if (!c.permitida) return json({ ok: false, motivo: 'Origem não autorizada.' }, 403);
     const com = r => new Response(r.body, { status: r.status, headers: Object.assign({}, Object.fromEntries(r.headers), c.headers) });
     try {
+      if (rota === '/atos/intencoes' && req.method === 'POST') {
+        const u = await exigirUsuario(req,env), b = await req.json();
+        const erro = validarPolys(b.polys); if (erro) throw new Falha(erro);
+        if (!Array.isArray(b.camadas) || !b.camadas.length || b.camadas.some(k => !Object.hasOwn(NOMES_CAMADAS,k)) || new Set(b.camadas).size !== b.camadas.length)
+          throw new Falha('Escolha camadas válidas, sem duplicatas.');
+        const area_cent_ha = Math.round(areaPoligonos(b.polys)/100);
+        if (area_cent_ha < 1 || area_cent_ha > 5000000) throw new Falha('Área fora do limite para compra online.');
+        const cupom = b.cupom == null || b.cupom === '' ? null : String(b.cupom).trim().toUpperCase();
+        if (cupom && !/^[A-Z0-9_-]{3,32}$/.test(cupom)) throw new Falha('Cupom inválido.');
+        return com(json(await criarIntencao(env,u,b,{area_hash:await hashTalhao(b.polys),area_cent_ha,
+          camadas:Object.keys(NOMES_CAMADAS).filter(k => b.camadas.includes(k)),cupom}),200,{'cache-control':'no-store'}));
+      }
+      if (rota === '/atos/compras' && req.method === 'GET') {
+        const u=await exigirUsuario(req,env);
+        if ([...url.searchParams.keys()].some(k => !['limite','cursor'].includes(k) || url.searchParams.getAll(k).length!==1)) throw new Falha('Parâmetros inválidos.');
+        return com(json({ok:true,...await listarAtos(env,u,url.searchParams.get('limite') || '25',url.searchParams.get('cursor'))},200,{'cache-control':'no-store'}));
+      }
       if (rota === '/preco' && req.method === 'POST') {
         const user = await usuario(req, env).catch(() => null);
         return json(Object.assign({ ok: true }, await orcar(await req.json(), env, user)), 200, c.headers);
       }
-      if (rota === '/eu' && req.method === 'GET') return com(await minhasCompras(env, await exigirUsuario(req, env)));
+      if (rota === '/eu' && req.method === 'GET') {
+        const u=await exigirUsuario(req,env);
+        if (url.search) {
+          if ([...url.searchParams.keys()].some(k=>!['limite','cursor'].includes(k)||url.searchParams.getAll(k).length!==1)) throw new Falha('Parâmetros inválidos.');
+          return com(json(await listarCompras(env,u,url.searchParams.get('limite') || '50',url.searchParams.get('cursor')),200,{'cache-control':'no-store'}));
+        }
+        return com(await minhasCompras(env,u)); // contrato antigo, para apps já instalados
+      }
       if ((rota === '/conta/atos/ida' || rota === '/conta/atos/volta') && req.method === 'POST') {
         if (!atosPronto(env)) throw new Falha('O login pela Conta Atos ainda não está configurado.', 503);
         const body = await req.json().catch(() => ({}));
@@ -484,7 +532,7 @@ export default {
       if (m && req.method === 'GET') { if (!bancoPronto(env)) throw new Falha('Serviço sem banco configurado.', 503); const u = await usuario(req, env); return com(await consultar(decodeURIComponent(m[1]), env, u, req.headers.get('x-plantare-acesso'))); }
       return json({ ok: false, motivo: 'Rota não encontrada.' }, 404, c.headers);
     } catch (e) {
-      if (e instanceof Falha) return json({ ok: false, motivo: e.message }, e.status, c.headers);
+      if (e instanceof Falha || e instanceof FalhaAtos) return json({ ok: false, motivo: e.message }, e.status, {...c.headers,'cache-control':'no-store'});
       console.log('erro ' + rota + ': ' + (e && (e.stack || e.message)));
       return json({ ok: false, motivo: 'Erro no serviço de pagamento.' }, 500, c.headers);
     }

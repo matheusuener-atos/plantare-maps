@@ -1,7 +1,8 @@
 # Cobrança do Plantare pela Atos — plano de adaptação
 
-Estado em 24/10/2026: **proposta**, sem alteração de pagamento, credenciais,
-rotas ou banco em produção. Acompanhamento: [issue #2](https://github.com/matheusuener-atos/plantare-maps/issues/2).
+Estado em 26/10/2026: contrato de referência; M3 implementado na branch de
+integração conforme [ATOS-M3.md](ATOS-M3.md). Sem alteração de pagamento,
+credenciais, rotas ou banco em produção. Acompanhamento: [issue #2](https://github.com/matheusuener-atos/plantare-maps/issues/2).
 
 O contrato entre os serviços ficará em `docs/PLANTARE-COBRANCA.md` no
 repositório `matheusuener-atos/atos.dev.br`, na entrega coordenada deste
@@ -53,9 +54,9 @@ podem ter hashes diferentes. Não renumerar compras nem recalcular suas datas.
    duplicação e mostrar qual pedido cada compra representa. Manter contratos
    de `/status`, `/pacote` e os domínios antigos para visitantes/app legado.
 
-As novas rotas, flags e tabelas ainda precisam ser implementadas. A Atos
-atual resolve ofertas fixas e um retrato de direito por produto; sua consulta
-de direitos não é a lista autoritativa de compras de talhões.
+As novas rotas, flags e tabelas estão implementadas em [ATOS-M3.md](ATOS-M3.md),
+com compra e snapshot por intenção. A consulta genérica de direitos por produto
+não substitui o snapshot individual de compra do talhão.
 
 ## Ideia futura: checkout da Atos dentro da experiência do Plantare
 

@@ -86,3 +86,7 @@ Veja [o serviço de conta, pagamento e entrega](pix-worker/README.md) para
 configuração e publicação do Worker. O aplicativo é montado por
 `site/montar.mjs`, conforme `site/wrangler.toml`. Publicação é uma etapa
 separada da execução dos testes.
+
+A [integração de compras Atos](docs/ATOS-M3.md) está implementada em teste,
+com direitos por intenção e preservação do legado. [Homologação e corte](docs/ATOS-M4.md)
+registram as evidências e o próximo ponto de implementação.

@@ -55,9 +55,9 @@ export function dados(env) {
     },
     /* quem é o dono deste token; null se não existe ou venceu */
     async contaDaSessao(token) {
-      const r = await um('select c.id, c.email, c.nome, s.expira from sessoes s join contas c on c.id = s.conta_id where s.hash = ?', await sha256(token));
+      const r = await um('select c.id, c.atos_sub, c.email, c.nome, s.expira from sessoes s join contas c on c.id = s.conta_id where s.hash = ?', await sha256(token));
       if (!r || Date.parse(r.expira) < Date.now()) return null;
-      return { id: r.id, email: String(r.email).toLowerCase(), nome: r.nome || '' };
+      return { id: r.id, atos_sub: r.atos_sub, email: String(r.email).toLowerCase(), nome: r.nome || '' };
     },
     async sessaoFim(token) { await rodar('delete from sessoes where hash = ?', await sha256(token)); },
     /* a Atos avisou que a pessoa perdeu o acesso: encerra todas as sessões dela (pelo sub; sem sub, pelo e-mail) */
@@ -166,6 +166,7 @@ export function dados(env) {
       }
       const tranca = await sha256(aleatorio(32));
       await db.batch([
+        ...(env.ATOS_COBRANCA_ORIGEM ? [db.prepare('update atos_intencoes set apagada=1 where conta_id=?').bind(contaId)] : []),
         db.prepare('update compras set conta_id = null, acesso_hash = ? where conta_id = ?').bind(tranca, contaId),
         db.prepare('delete from cupom_usos where conta_id = ?').bind(contaId),
         db.prepare('delete from talhoes where conta_id = ?').bind(contaId),
