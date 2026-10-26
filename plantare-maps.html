@@ -7145,7 +7145,7 @@ function visitaLer(){ try{ return JSON.parse(localStorage.getItem(VISITA_CHAVE)|
 function visitaGuardar(c){ try{ const l=visitaLer().filter(x=>x.id!==c.id); l.unshift(c); localStorage.setItem(VISITA_CHAVE, JSON.stringify(l.slice(0,60))); }catch(e){} }
 function compraQueCobre(camadas){
   if(AREA_HASH.polys!==E.polysLL || !AREA_HASH.valor) return null;
-  const cobre=c=>c.area_hash===AREA_HASH.valor && camadas.every(k=>(c.camadas||[]).includes(k));
+  const cobre=c=>c.area_hash===AREA_HASH.valor && camadas.every(k=>(c.camadas||[]).includes(k)) && (c.provedor!=='atos' || (c.direito_ativo && ['paga','concedida'].includes(c.estado) && Date.parse(c.baixar_ate)>Date.now()));
   return (CONTA.compras||[]).find(cobre) || visitaLer().find(c=>c.pago && cobre(c)) || null;
 }
 /* sem conta: calcula a impressão digital do talhão para achar compras feitas neste navegador */
@@ -7158,7 +7158,7 @@ async function contaSincronizar(forcar){
   if(contaSinc) return contaSinc;
   contaSinc=(async()=>{
     try{ await hashDoTalhao(E.polysLL); AREA_HASH.polys=E.polysLL;
-      if(!CONTA.compras){ const r=await pgChamar('/eu'); CONTA.compras=r.compras||[]; } }
+      if(!CONTA.compras) CONTA.compras=await contaComprasPaginadas(); }
     catch(e){ /* sem rede: a tela segue com o preço cheio */ }
     finally{ contaSinc=null; }
   })();
@@ -10164,6 +10164,44 @@ $('#painel').addEventListener('change',e=>{
 const brl=v=>v.toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
 /* modos: 'gratis' (nada a cobrar ou plano já pago), 'demo' (sem serviço Pix configurado), 'pix' (cobra de verdade) */
 const PG={modo:'demo', preco:null, cupom:'', pedido:null, timer:null, camadas:[], id:''};
+async function contaComprasPaginadas(){
+  const compras=[], vistos=new Set(); let cursor=null;
+  do{ const r=await contaApi('/eu?limite=50'+(cursor?'&cursor='+encodeURIComponent(cursor):''));
+    for(const c of r.compras||[]) if(!vistos.has(c.id)){ vistos.add(c.id); compras.push(c); }
+    if(r.proximo_cursor===cursor && cursor) throw new Error('A lista de compras não avançou. Tente novamente.');
+    cursor=r.proximo_cursor||null;
+  }while(cursor);
+  return compras;
+}
+async function pgEscopoCentral(){
+  await hashLocalDoTalhao();
+  const chave='plantare.atos.intencao:'+await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify([contaEmail(),AREA_HASH.valor,PG.camadas,PG.cupom,PG.id]))).then(b=>Array.from(new Uint8Array(b),x=>x.toString(16).padStart(2,'0')).join(''));
+  return chave;
+}
+async function pgCentralDisponivel(){
+  const cfg=await pgChamar('/saude');
+  const chave=contaLogada()?await pgEscopoCentral():null;
+  return cfg.checkout_atos || !!(chave && localStorage.getItem(chave));
+}
+async function pgCheckoutCentral(){
+  if(!contaLogada()){ PG.central=true; PG.mostrarLogin=true; pgContaTela(); throw new Error('Entre com a sua Conta Atos para continuar no checkout.'); }
+  const chave=await pgEscopoCentral();
+  let intent=localStorage.getItem(chave);
+  if(!intent){ intent='int-'+crypto.randomUUID(); localStorage.setItem(chave,intent); }
+  PG.central=true;
+  let r;try{r=await pgChamar('/atos/intencoes',{intent_id:intent,plano:PG.id,polys:E.polysLL,camadas:PG.camadas,cupom:PG.cupom||null});}catch(e){e.intencaoChave=chave;throw e;}
+  PG.pedido=r.compra.id;PG.acesso=null;PG.checkout=r.checkout_url;
+  $('#pgTotal').textContent=brl(r.orcamento.centavos/100);
+  $('#pgConta').textContent='Orçamento final da Atos · '+fmt(r.orcamento.area_cent_ha/100,2)+' ha';
+  $('#pgGerar').textContent='Atualizar compra';$('#pgGerar').disabled=false;
+  $('#pgGerarMsg').textContent='A confirmação e o pagamento acontecem na Atos. ';
+  if(r.checkout_url){ const a=document.createElement('a');a.href=r.checkout_url;a.target='_blank';a.rel='noopener';a.textContent='Abrir checkout Atos';
+    a.onclick=e=>{const w=window.open(r.checkout_url,'plantare-atos','popup,width=540,height=820');if(w)e.preventDefault();};
+    $('#pgGerarMsg').append(a);
+  }else $('#pgGerarMsg').append(document.createTextNode('Checkout temporariamente indisponível; a intenção foi preservada.'));
+  $('#pgPix').hidden=true;$('#pgSimular').hidden=true;
+  pgEsperar(Date.now()+60*60e3);
+}
 function pgPararEspera(){ if(PG.timer){ clearTimeout(PG.timer); PG.timer=null; } }
 function pgMostrarTotal(){
   const p=PG.preco;
@@ -10174,7 +10212,7 @@ function pgMostrarTotal(){
 function abrirPagamento(){
   const n=contarArquivos(); if(!n || !E.aprovado || E.passo!=='arquivos') return;
   const id=idPlano(); pgPararEspera();
-  PG.id=id; PG.cupom=''; PG.pedido=null; PG.acesso=null; PG.jaPago=false; PG.cortesia=false; PG.mostrarLogin=false; PG.preco=precoAtual(); PG.camadas=PG.preco.camadas.slice();
+  PG.id=id; PG.cupom=''; PG.pedido=null; PG.acesso=null; PG.jaPago=false; PG.cortesia=false; PG.central=false; PG.checkout=null; PG.mostrarLogin=false; PG.preco=precoAtual(); PG.camadas=PG.preco.camadas.slice();
   const ja=PG.preco.total && pixApi() ? compraQueCobre(PG.camadas) : null;
   if(ja){ PG.pedido=ja.id; PG.acesso=ja.acesso||null; PG.jaPago=true; }
   PG.modo = (!PG.preco.total || ja) ? 'gratis' : pixApi() ? 'pix' : 'demo';
@@ -10213,7 +10251,7 @@ function pgConfigurar(){
 /* login / conta dentro da etapa 02 */
 /* Conta é opcional: sem ela, o Pix (e o cupom, inclusive cortesia) pede só o e-mail do comprovante. */
 function pgContaTela(){
-  const logado=contaLogada(), ativo=(PG.modo==='pix' || PG.cortesia) && !(PG.pedido && !PG.cortesia), exige=false;
+  const logado=contaLogada(), ativo=(PG.modo==='pix' || PG.cortesia) && !(PG.pedido && !PG.cortesia), exige=!!PG.central;
   const visita=ativo && !logado && !exige;
   $('#pgLogin').hidden=!(ativo && !logado && (exige || PG.mostrarLogin));
   $('#pgLoginNota').textContent=exige?'O cupom vale uma vez por conta: entre para usar.':'Entre para guardar a compra na sua conta e baixar de novo em qualquer aparelho.';
@@ -10243,10 +10281,19 @@ async function pgChamar(rota, corpo){
   if(corpo) h['content-type']='application/json';
   const r=await fetch(pixApi()+rota, corpo?{method:'POST', headers:h, body:JSON.stringify(corpo)}:{headers:h});
   let j=null; try{ j=await r.json(); }catch(e){}
-  if(!r.ok || !j || j.ok===false) throw new Error((j&&j.motivo)||'O serviço de pagamento não respondeu.');
+  if(!r.ok || !j || j.ok===false){const e=new Error((j&&j.motivo)||'O serviço de pagamento não respondeu.');e.status=r.status;throw e;}
   return j;
 }
+function pgErroCentral(e){
+  $('#pgGerarMsg').textContent=e.message;$('#pgGerar').disabled=false;
+  if(e.status===410 && e.intencaoChave){const b=document.createElement('button');b.type='button';b.textContent='Criar novo orçamento';
+    b.onclick=()=>{localStorage.removeItem(e.intencaoChave);PG.pedido=null;pgGerarPix();};$('#pgGerarMsg').append(document.createTextNode(' '),b);}
+}
 async function pgGerarPix(){
+  $('#pgGerar').disabled=true;
+  try{ if(await pgCentralDisponivel()){await pgCheckoutCentral();return;} }
+  catch(e){pgErroCentral(e);return;}
+  $('#pgGerar').disabled=false;
   // conta é opcional: sem ela, vale o e-mail do comprovante (também na cortesia)
   let email;
   if(contaLogada()){ email=contaEmail(); if(!PG.cortesia) contaSalvarTalhaoAgora().catch(()=>{}); }   // com conta: o talhão vai para "Meus talhões"
@@ -10291,13 +10338,13 @@ function pgEsperar(ate){
     if(!$('#pagamento').open || !PG.pedido) return;
     try{
       const s=await pgChamar('/status/'+encodeURIComponent(PG.pedido));
-      if(s.pago){ if(CONTA.compras) CONTA.compras.unshift({id:s.id, area_hash:s.area, camadas:s.camadas||PG.camadas, plano:s.plano});
+      if(s.pago){ if(CONTA.compras) CONTA.compras.unshift({id:s.id, area_hash:s.area, camadas:s.camadas||PG.camadas, plano:s.plano,provedor:s.provedor,estado:s.status,direito_ativo:s.pago,baixar_ate:s.baixar_ate});
         if(PG.acesso){ const v=visitaLer().find(x=>x.id===s.id); if(v) visitaGuardar(Object.assign(v,{pago:true, camadas:s.camadas||v.camadas, area_hash:s.area||v.area_hash})); }
         $('#pgEspera').hidden=true; PG.modo='pago'; pagamentoConfirmado(); return; }
-      if(s.encerrado){ $('#pgEspera').hidden=true; $('#pgPixNota').textContent='Este Pix não foi concluído ('+s.status+'). Feche e gere outro para baixar.'; return; }
+      if(s.encerrado){ $('#pgEspera').hidden=true; $('#pgPixNota').textContent=PG.central?'Esta compra está '+s.status+'. Confira o histórico na sua conta; nenhum novo Pix foi criado.':'Este Pix não foi concluído ('+s.status+'). Feche e gere outro para baixar.'; $('#pgGerarMsg').textContent=$('#pgPixNota').textContent; return; }
       if(!PG.qrPronto && (s.qr_code||s.qr_code_base64)){ pgMostrarQr(s); if(s.expira) ate=Date.parse(s.expira); }
     }catch(e){ /* rede instável: tenta de novo */ }
-    if(Date.now()>ate){ $('#pgEspera').hidden=true; $('#pgPixNota').textContent='Este Pix expirou. Feche e gere outro para baixar.'; return; }
+    if(Date.now()>ate){ $('#pgEspera').hidden=true; $('#pgPixNota').textContent=PG.central?'O acompanhamento foi pausado. Atualize a compra para consultar a mesma intenção.':'Este Pix expirou. Feche e gere outro para baixar.'; return; }
     PG.timer=setTimeout(passo, 4000);
   };
   PG.timer=setTimeout(passo, 3000);
@@ -10342,6 +10389,9 @@ $('#pgAplicar').addEventListener('click',async()=>{
   if(!c){ $('#pgCupomMsg').textContent='Digite o código do cupom.'; return; }
   if(PG.modo!=='pix'){ $('#pgCupomMsg').textContent='Cupons valem só no pagamento real.'; return; }
   $('#pgCupomMsg').textContent='Conferindo…';
+  try{ if(await pgCentralDisponivel()){
+    PG.cupom=c.toUpperCase();await pgCheckoutCentral();$('#pgCupomMsg').textContent='Cupom conferido no orçamento final da Atos.';return;
+  }}catch(e){$('#pgCupomMsg').textContent=e.message;return;}
   const em=contaLogada()?undefined:($('#pgEmail').value.trim()||undefined);   // sem conta: o e-mail já digitado ajuda a conferir o "uma vez por pessoa"
   try{ const r=await pgChamar('/preco',{polys:E.polysLL, camadas:PG.camadas, cupom:c, email:em});
     PG.cupomInfo=r.cupom&&r.cupom.valido?r.cupom:null;
@@ -13831,7 +13881,7 @@ async function contaTalhoes(forcar){
 }
 async function contaCompras(forcar){
   if(CX.compras && !forcar) return CX.compras;
-  CX.compras=(await contaApi('/eu')).compras||[];
+  CX.compras=await contaComprasPaginadas();
   return CX.compras;
 }
 async function contaBaixarProjeto(t){
@@ -13951,7 +14001,7 @@ function contaExtrato(cs){
       +'<div class="extrato-det"><dl>'
       +'<dt>Comprado</dt><dd>'+esc(cam||'—')+'</dd>'
       +'<dt>Área</dt><dd>'+fmt(+c.ha||0,2)+' ha</dd>'
-      +'<dt>Pago em</dt><dd>'+esc(dataHoraBR(c.pago_em||c.criado_em))+'</dd>'
+      +'<dt>Situação</dt><dd>'+esc(c.provedor==='atos'?c.estado:'pago')+'</dd><dt>Pago em</dt><dd>'+esc(c.pago_em?dataHoraBR(c.pago_em):'Aguardando confirmação')+'</dd>'
       +(c.cupom?'<dt>Cupom</dt><dd>'+esc(c.cupom)+(+c.valor===0?' · cortesia':'')+'</dd>':'')
       +'<dt>Pedido</dt><dd style="font:11px var(--f-num)">'+esc(c.id)+'</dd>'
       +'<dt>Downloads</dt><dd>'+(c.downloads||0)+'</dd></dl>'

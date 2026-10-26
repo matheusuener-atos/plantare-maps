@@ -1,5 +1,9 @@
 # Plantare · serviço de conta, pagamento e entrega
 
+> A cobrança direta descrita aqui é a implementação atual. A integração
+> central com a Atos está no [plano de adaptação](../docs/COBRANCA-ATOS.md),
+> ainda sem migração de pagamentos ou mudança de rotas em produção.
+
 Cloudflare Worker que guarda as contas do Plantare Maps, cobra os arquivos por Pix (Mercado Pago, Orders API) e **gera os arquivos pagos** (KML, KMZ, AB, rota, Shapefile, GeoJSON, CSV).
 O app não tem mais esse gerador: depois do pagamento, ele manda o plano para `/pacote` e recebe os arquivos prontos, carimbados com a conta e o pedido.
 Relatório PDF, imagem PNG e projeto JSON continuam grátis e saem do próprio navegador.
@@ -78,3 +82,10 @@ As da conta e `/eu` pedem `Authorization: Bearer <token da sessão>`; Pix, statu
 
 ## Testes
 `npm test` roda 107 casos contra um Mercado Pago e uma Atos falsos e um D1 de verdade em SQLite (o `node:sqlite` do Node 24, com a mesma migração que vai ao ar) e um R2 em memória: tabela de preços, cupons (por conta, por e-mail, por talhão, ilimitado, banco fora do ar), cortesia, Pix assíncrono, webhook, a entrega dos arquivos (só as camadas pagas, carimbadas, do talhão certo), cadastro, talhões e projetos da conta (cada conta só vê o seu), sair e sessão vencida, excluir a conta e o "Entrar com Atos" (PKCE, `state` e código usados de novo, `id_token` assinado por outra chave, e-mail não confirmado, `access_denied`, e-mail trocado na Atos, segredo do acesso confidencial) e os avisos da Atos (assinatura, aviso velho, acesso tirado e lista de liberados encerrando só as sessões da pessoa).
+
+## Compras centrais Atos em teste
+
+A [integração M3](../docs/ATOS-M3.md) acrescenta intenção durável, receptor
+assinado, projeção D1, consulta central antes da entrega e listagem combinada
+paginada. A flag de novas compras começa desligada; o legado permanece.
+Veja [M4](../docs/ATOS-M4.md) para provas, inventário e condições do corte.

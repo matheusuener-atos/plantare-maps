@@ -24,6 +24,12 @@ ATOS_CLIENT_ID = "u-tlwhzxkfv5-j5rmta"
 ATOS_VOLTA = "https://plantaremaps.com.br/"
 # Por quantos dias uma compra paga pode ser baixada de novo (mesmo talhão, mesmas camadas). 0 = sem limite.
 REBAIXAR_DIAS = "365"
+# Compras centrais: só novas intenções, e somente com AMBIENTE="teste".
+# Desligar esta flag mantém consulta, eventos e entrega das intenções existentes.
+ATOS_NOVAS_COMPRAS = "0"
+# Configurar no ambiente isolado: ATOS_COBRANCA_ORIGEM (Atos de teste),
+# ATOS_COBRANCA_TOKEN (segredo S2S) e ATOS_COMPRAS_SEGREDO (eventos compra.atualizada).
+# O segredo de compras NÃO é ATOS_AVISOS_SEGREDO nem ATOS_CLIENT_SECRET.
 # Remetente dos e-mails de cortesia (domínio precisa estar no Email Sending da Cloudflare)
 EMAIL_DE = "nao-responda@plantaremaps.com.br"
 # Validade do Pix (ISO 8601)
