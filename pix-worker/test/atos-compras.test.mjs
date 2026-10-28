@@ -7,7 +7,7 @@ import {instalarFalsos} from './falsos.mjs';
 import {calcularPreco} from '../src/preco.js';
 const original=globalThis.fetch; after(()=>{globalThis.fetch=original});
 const ORIG='https://plantare.matheusuener.com.br';
-const plano=JSON.parse(readFileSync(new URL('./plano_arvore.json',import.meta.url)));
+const plano={...JSON.parse(readFileSync(new URL('./plano_arvore.json',import.meta.url))),formatos:{csv:true}};
 const polys=plano.polys;
 const camadas=['linhas_ab','bordadura','percurso','manobras'];
 async function abrir(t) {
@@ -127,7 +127,7 @@ test('conta apagada não revive por evento nem por novo cadastro com mesmo sub/e
 test('download consulta Atos e respeita dono, geometria, camadas, prazo e revogação',async t=>{
   const f=await abrir(t),r=await f.nova({camadas:['linhas_ab']}),c=f.cs.get(r.data.intent_id);f.pagar(c);
   const body={pedido:c.id,entrada:plano};
-  const ok=await f.req('/pacote',body);assert.equal(ok.status,200,JSON.stringify(ok.data));assert.ok(ok.data.arquivos.length>0);
+  const ok=await f.req('/pacote',body);assert.equal(ok.status,200,JSON.stringify(ok.data));assert.ok(ok.data.arquivos.some(a=>a.name.endsWith('.csv')&&Buffer.from(a.b64,'base64').length>20));
   assert.equal(f.sql('select downloads from atos_compras')[0].downloads,1);
   assert.equal((await f.req('/pacote',body,{token:f.beto.token})).status,404);
   assert.equal((await f.req('/pacote',{...body,entrada:{...plano,camadas:['bordadura']}})).status,403);

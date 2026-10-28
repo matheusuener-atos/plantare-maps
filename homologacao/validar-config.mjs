@@ -1,0 +1,10 @@
+import assert from "node:assert/strict";
+import {readFileSync} from "node:fs";
+const c=JSON.parse(readFileSync(new URL("./wrangler.json",import.meta.url),"utf8"));
+assert.equal(c.name,"plantare-atos-teste");assert.deepEqual(c.routes,[]);assert.equal(c.vars.AMBIENTE,"teste");
+assert.equal(c.d1_databases.length,1);assert.equal(c.d1_databases[0].database_id,"40c4b459-9e05-4c62-bdb8-1bb57a4f080a");
+assert.notEqual(c.d1_databases[0].database_id,"fa237575-a9c7-49db-8151-83866aa4e67d");
+assert.deepEqual(c.r2_buckets,[{binding:"PROJETOS",bucket_name:"plantare-atos-teste-projetos"}]);
+assert.deepEqual(c.services,[{binding:"ATOS_COBRANCA",service:"atos-teste"}]);
+for(const k of ["ATOS_COBRANCA_TOKEN","ATOS_COMPRAS_SEGREDO","PLANTARE_HOMOLOG_TOKEN"])assert.equal(c.vars[k],undefined,"Segredo não deve constar da configuração");
+console.log("Configuração Plantare de homologação: D1/R2 isolados e nenhum domínio de produção.");

@@ -89,3 +89,7 @@ A [integração M3](../docs/ATOS-M3.md) acrescenta intenção durável, receptor
 assinado, projeção D1, consulta central antes da entrega e listagem combinada
 paginada. A flag de novas compras começa desligada; o legado permanece.
 Veja [M4](../docs/ATOS-M4.md) para provas, inventário e condições do corte.
+
+A [prova remota M4](../docs/ATOS-M4-REMOTO.md) registra o gateway de teste real,
+restauração D1/R2 isolada e os scripts de repetição. Novas centrais e controladores
+de homologação ficaram desligados ao encerrar; produção não foi ativada.
