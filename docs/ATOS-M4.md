@@ -79,3 +79,7 @@ e rollback. D1 e amostra R2 produtivos restaurados em recursos isolados e confer
 Houve publicação e migração apenas em teste; produção permanece sem corte.
 M4 segue aberto para importação de histórico/campanhas, delta/coorte, webhook do
 gateway e login remoto completo. Controladores temporários encerrados.
+
+O [importador de histórico e campanhas](ATOS-M4-LEGADO.md) foi implementado e
+ensaiado com o backup real em SQLite isolado. Aplicação remota e delta do corte
+ainda não executados; o ensaio não publica campanhas ou recria cobranças.
