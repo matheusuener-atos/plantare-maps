@@ -1,0 +1,41 @@
+{
+  "name": "plantare-atos-teste",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "main": "worker.js",
+  "workers_dev": true,
+  "routes": [],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "plantare-atos-teste",
+      "database_id": "40c4b459-9e05-4c62-bdb8-1bb57a4f080a",
+      "migrations_dir": "../pix-worker/migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "PROJETOS",
+      "bucket_name": "plantare-atos-teste-projetos"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "AMBIENTE": "teste",
+    "ATOS_NOVAS_COMPRAS": "0",
+    "ATOS_COBRANCA_ORIGEM": "https://atos-teste.matheusuener-atos.workers.dev",
+    "PLANTARE_HOMOLOG_ATIVO": "0",
+    "REBAIXAR_DIAS": "365",
+    "ORIGENS": "https://plantare-atos-teste.matheusuener-atos.workers.dev,http://127.0.0.1:18815"
+  },
+  "services": [
+    {
+      "binding": "ATOS_COBRANCA",
+      "service": "atos-teste"
+    }
+  ]
+}

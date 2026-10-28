@@ -70,3 +70,12 @@ Uma ausência de pendentes neste inventário não autoriza removê-los.
 O corte será pertinente quando essas provas remotas, importação/delta e
 restauração estiverem concluídas. A implementação local e o CI aprovados
 são parte da evidência, não substituem essas condições.
+
+## Atualização de 28/10/2026
+
+[Prova remota e restauração](ATOS-M4-REMOTO.md) executadas: gateway real de teste,
+eventos entre Workers, arquivos pagos, devoluções, replay, cortesia, concorrência
+e rollback. D1 e amostra R2 produtivos restaurados em recursos isolados e conferidos.
+Houve publicação e migração apenas em teste; produção permanece sem corte.
+M4 segue aberto para importação de histórico/campanhas, delta/coorte, webhook do
+gateway e login remoto completo. Controladores temporários encerrados.

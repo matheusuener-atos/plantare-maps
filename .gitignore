@@ -2,6 +2,8 @@ node_modules/
 .wrangler/
 .dev.vars
 .env*
+homologacao/.privado/
+relatorio-homologacao.json
 *.zip
 site/public/
 desktop.ini
